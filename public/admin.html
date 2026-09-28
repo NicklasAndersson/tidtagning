@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="/app.css">
+<style>
+  #stationMap { height: 380px; margin-bottom: 0.75rem; cursor: crosshair; }
+  #unknown { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 0.5rem; }
+  #unknown li { background: #fff4e0; border: 1px solid #f1d59b; border-radius: 6px; padding: 0.3rem 0.3rem 0.3rem 0.6rem; }
+  #unknown button { margin-left: 0.5rem; padding: 0.15rem 0.5rem; }
+  #countdown { font-size: 1.4rem; font-weight: 700; margin-bottom: 0.75rem; }
+</style>
+</head>
+<body>
+<script src="/nav.js" data-menu="admin"></script>
+<main>
+<h1>Admin</h1>
+
+<section class="card">
+  <h2>Lopp</h2>
+  <div class="row">
+    <input id="raceNamn" placeholder="Loppets namn" style="flex: 2;">
+    <button onclick="saveRaceNamn()">Spara namn</button>
+  </div>
+  <div class="row">
+    <input id="gpxFile" type="file" accept=".gpx">
+    <button onclick="uploadGpx()">Ladda upp GPX-spår</button>
+    <span id="gpxStatus" class="status"></span>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Okända startnummer</h2>
+  <p class="muted">Skannade nummer utan kopplad deltagare. Klicka för att namnge.</p>
+  <ul id="unknown"></ul>
+</section>
+
+<section class="card">
+  <h2>Deltagare</h2>
+  <div class="table-wrap"><table id="participantsTable"><thead><tr><th>Startnr</th><th>Namn</th><th>Klass</th><th></th></tr></thead><tbody></tbody></table></div>
+  <div class="row">
+    <input id="pStart" placeholder="Startnummer">
+    <input id="pNamn" placeholder="Namn">
+    <input id="pKlass" placeholder="Klass">
+    <button onclick="saveParticipant()">Spara</button>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Stationer</h2>
+  <p class="muted">Klicka på kartan för att sätta stationens position. Klicka på en befintlig station för att redigera den.</p>
+  <div id="stationMap"></div>
+  <div class="row">
+    <input id="sOrdning" type="number" min="1" placeholder="Ordning" title="Stationens ordning längs banan (1 = först). Tomt = sist." style="flex: 0; min-width: 6.5rem;">
+    <input id="sNamn" placeholder="Namn">
+    <select id="sTyp"><option value="checkpoint">Checkpoint</option><option value="mal">Mål</option></select>
+    <input id="sPos" placeholder="Lat, long (klicka på kartan)">
+    <button id="sSave" onclick="saveStation()">Lägg till station</button>
+    <button id="sCancel" class="secondary" onclick="resetStationForm()" hidden>Avbryt</button>
+  </div>
+  <div class="table-wrap"><table id="stationsTable"><thead><tr><th>Ordning</th><th>Namn</th><th>Typ</th><th>Position</th><th></th></tr></thead><tbody></tbody></table></div>
+</section>
+
+<section class="card">
+  <h2>Funktionärer</h2>
+  <div class="table-wrap"><table id="funktionarerTable"><thead><tr><th>Station</th><th>Namn</th><th>Länk</th><th></th></tr></thead><tbody></tbody></table></div>
+  <div class="row">
+    <select id="fStation"></select>
+    <input id="fNamn" placeholder="Namn (valfritt)">
+    <button onclick="saveFunktionar()">Skapa funktionärskort</button>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Mass-start</h2>
+  <div id="countdown"></div>
+  <div class="row">
+    <button onclick="startNow()">Starta loppet nu</button>
+    <input id="startInSeconds" type="number" placeholder="sekunder" style="flex: 0; min-width: 7rem;">
+    <button class="secondary" onclick="startIn()">Starta om X sekunder</button>
+  </div>
+  <div class="row">
+    <input id="startTime" type="datetime-local" style="flex: 0; min-width: 14rem;">
+    <button class="secondary" onclick="saveStartTime()">Spara exakt starttid</button>
+  </div>
+</section>
+
+<section class="card danger">
+  <h2>Arkivera & börja om</h2>
+  <p class="muted">Sparar en ögonblicksbild av resultaten (med loppnamnet) och rensar sedan alla deltagare, stationer, funktionärer och tider, så att systemet är redo för nästa lopp.</p>
+  <button class="danger" onclick="resetRace()">Arkivera och nollställ loppet</button>
+  <h3>Tidigare lopp</h3>
+  <ul id="archives"></ul>
+</section>
+</main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-gpx@1.7.0/gpx.js"></script>
+<script>
+// ponytail: samma delade admin-inloggning skickas som Basic Auth på varje anrop,
+// webbläsaren visar sin inbyggda inloggningsruta vid 401 — ingen egen sessionshantering behövs
+async function api(path, opts = {}) {
+  const res = await fetch(path, { ...opts, headers: { 'Content-Type': 'application/json', ...opts.headers } });
+  if (!res.ok) throw new Error(await res.text());
+  return res.status === 204 ? null : res.json();
+}
+
+async function loadUnknown() {
+  const rows = await api('/api/admin/unknown-runners');
+  const el = document.getElementById('unknown');
+  el.innerHTML = '';
+  for (const { runner_id } of rows) {
+    const li = document.createElement('li');
+    li.textContent = '#' + runner_id;
+    const btn = document.createElement('button');
+    btn.textContent = 'Namnge';
+    btn.onclick = () => {
+      document.getElementById('pStart').value = runner_id;
+      document.getElementById('pNamn').focus();
+    };
+    li.appendChild(btn);
+    el.appendChild(li);
+  }
+  if (!rows.length) el.innerHTML = '<span class="muted">Inga just nu.</span>';
+}
+
+async function loadParticipants() {
+  const rows = await api('/api/admin/participants');
+  const tbody = document.querySelector('#participantsTable tbody');
+  tbody.innerHTML = '';
+  for (const p of rows) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${p.startnummer}</td><td>${p.namn}</td><td>${p.klass}</td><td><button data-id="${p.startnummer}">Ta bort</button></td>`;
+    tr.querySelector('button').onclick = () => deleteParticipant(p.startnummer);
+    tbody.appendChild(tr);
+  }
+}
+
+async function saveParticipant() {
+  const startnummer = document.getElementById('pStart').value.trim();
+  const namn = document.getElementById('pNamn').value.trim();
+  const klass = document.getElementById('pKlass').value.trim();
+  if (!startnummer || !namn) return;
+  await api(`/api/admin/participants/${encodeURIComponent(startnummer)}`, { method: 'PUT', body: JSON.stringify({ namn, klass }) });
+  document.getElementById('pStart').value = '';
+  document.getElementById('pNamn').value = '';
+  document.getElementById('pKlass').value = '';
+  await Promise.all([loadParticipants(), loadUnknown()]);
+}
+
+async function deleteParticipant(startnummer) {
+  await api(`/api/admin/participants/${encodeURIComponent(startnummer)}`, { method: 'DELETE' });
+  await Promise.all([loadParticipants(), loadUnknown()]);
+}
+
+const stationMap = L.map('stationMap').setView([62, 16], 5);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap-bidragsgivare' }).addTo(stationMap);
+const stationLayer = L.layerGroup().addTo(stationMap);
+let gpxLayer = null;
+let pendingMarker = null;
+let mapFitted = false;
+
+function loadGpxOnMap() {
+  if (gpxLayer) stationMap.removeLayer(gpxLayer);
+  gpxLayer = new L.GPX('/api/gpx', {
+    async: true,
+    marker_options: { startIconUrl: null, endIconUrl: null, shadowUrl: null }
+  }).on('loaded', (e) => { mapFitted = true; stationMap.fitBounds(e.target.getBounds()); }).addTo(stationMap);
+}
+
+function setPendingPosition(lat, long) {
+  document.getElementById('sPos').value = `${lat.toFixed(6)}, ${long.toFixed(6)}`;
+  if (pendingMarker) pendingMarker.setLatLng([lat, long]);
+  else pendingMarker = L.marker([lat, long]).addTo(stationMap);
+}
+
+let editingStationId = null;
+
+function resetStationForm() {
+  editingStationId = null;
+  for (const id of ['sOrdning', 'sNamn', 'sPos']) document.getElementById(id).value = '';
+  document.getElementById('sTyp').value = 'checkpoint';
+  document.getElementById('sSave').textContent = 'Lägg till station';
+  document.getElementById('sCancel').hidden = true;
+  if (pendingMarker) { stationMap.removeLayer(pendingMarker); pendingMarker = null; }
+}
+
+function editStation(s) {
+  editingStationId = s.id;
+  document.getElementById('sSave').textContent = 'Spara ändringar';
+  document.getElementById('sCancel').hidden = false;
+  document.getElementById('sOrdning').value = s.ordning ?? '';
+  document.getElementById('sNamn').value = s.namn;
+  document.getElementById('sTyp').value = s.typ;
+  document.getElementById('sPos').value = s.lat != null ? `${s.lat}, ${s.long}` : '';
+  document.getElementById('sNamn').focus();
+}
+
+stationMap.on('click', (e) => setPendingPosition(e.latlng.lat, e.latlng.lng));
+
+async function loadStations() {
+  const rows = await api('/api/admin/stations');
+  const tbody = document.querySelector('#stationsTable tbody');
+  tbody.innerHTML = '';
+  stationLayer.clearLayers();
+  for (const s of rows) {
+    const tr = document.createElement('tr');
+    const pos = s.lat != null ? `${s.lat}, ${s.long}` : '–';
+    tr.innerHTML = `<td>${s.ordning ?? ''}</td><td>${s.namn}</td><td>${s.typ === 'mal' ? 'Mål' : 'Checkpoint'}</td><td>${pos}</td>` +
+      `<td><button class="edit">Redigera</button> <button class="del">Ta bort</button></td>`;
+    tr.querySelector('.edit').onclick = () => editStation(s);
+    tr.querySelector('.del').onclick = () => deleteStation(s.id);
+    tbody.appendChild(tr);
+    if (s.lat != null) {
+      L.circleMarker([s.lat, s.long], { radius: 9, color: s.typ === 'mal' ? '#c00' : '#333', fillColor: '#fff', fillOpacity: 1, weight: 3 })
+        .bindTooltip(s.namn, { permanent: true, direction: 'right', offset: [8, 0] })
+        .on('click', (e) => { L.DomEvent.stopPropagation(e); editStation(s); })
+        .addTo(stationLayer);
+    }
+  }
+  const placed = rows.filter(s => s.lat != null);
+  if (!mapFitted && placed.length) {
+    mapFitted = true;
+    stationMap.fitBounds(L.latLngBounds(placed.map(s => [s.lat, s.long])), { maxZoom: 15, padding: [30, 30] });
+  }
+  document.getElementById('fStation').innerHTML = rows.map(s => `<option value="${s.id}">${s.namn}</option>`).join('');
+}
+
+async function loadFunktionarer() {
+  const rows = await api('/api/admin/funktionarer');
+  const tbody = document.querySelector('#funktionarerTable tbody');
+  tbody.innerHTML = '';
+  for (const f of rows) {
+    const tr = document.createElement('tr');
+    const link = `${location.origin}/scan/${f.token}`;
+    tr.innerHTML = `<td>${f.station_namn}</td><td>${f.namn}</td><td><a href="${link}">${link}</a></td><td><button data-id="${f.token}">Ta bort</button></td>`;
+    tr.querySelector('button').onclick = () => deleteFunktionar(f.token);
+    tbody.appendChild(tr);
+  }
+}
+
+async function saveFunktionar() {
+  const stationId = document.getElementById('fStation').value;
+  const namn = document.getElementById('fNamn').value.trim();
+  if (!stationId) return;
+  await api('/api/admin/funktionarer', { method: 'POST', body: JSON.stringify({ stationId, namn }) });
+  document.getElementById('fNamn').value = '';
+  await loadFunktionarer();
+}
+
+async function deleteFunktionar(token) {
+  await api(`/api/admin/funktionarer/${encodeURIComponent(token)}`, { method: 'DELETE' });
+  await loadFunktionarer();
+}
+
+async function saveStation() {
+  const namn = document.getElementById('sNamn').value.trim();
+  const typ = document.getElementById('sTyp').value;
+  if (!namn) return alert('Stationen behöver ett namn.');
+  const ordningText = document.getElementById('sOrdning').value;
+  const posText = document.getElementById('sPos').value.trim();
+  const [lat, long] = posText.split(',').map(Number);
+  if (posText && !(Math.abs(lat) <= 90 && Math.abs(long) <= 180)) return alert('Position ska vara "lat, long", t.ex. 59.3293, 18.0686');
+  const body = { namn, typ, ...(posText && { lat, long }), ...(ordningText && { ordning: Number(ordningText) }) };
+  if (editingStationId) {
+    await api(`/api/admin/stations/${encodeURIComponent(editingStationId)}`, { method: 'PUT', body: JSON.stringify(body) });
+  } else {
+    await api('/api/admin/stations', { method: 'POST', body: JSON.stringify(body) });
+  }
+  resetStationForm();
+  await loadStations();
+}
+
+async function deleteStation(id) {
+  await api(`/api/admin/stations/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  if (editingStationId === id) resetStationForm();
+  await loadStations();
+}
+
+let startTimeMs = null;
+
+function fmtElapsed(ms) {
+  const s = Math.floor(ms / 1000);
+  const hh = String(Math.floor(s / 3600)).padStart(2, '0');
+  const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+  const ss = String(s % 60).padStart(2, '0');
+  return `${hh}:${mm}:${ss}`;
+}
+
+function renderCountdown() {
+  const el = document.getElementById('countdown');
+  if (!startTimeMs) { el.textContent = 'Ingen starttid satt.'; return; }
+  const diff = startTimeMs - Date.now();
+  el.textContent = diff > 0 ? `Start om ${fmtElapsed(diff)}` : `Loppet startade ${new Date(startTimeMs).toLocaleTimeString()}`;
+}
+
+async function loadStartTime() {
+  const row = await api('/api/admin/race-settings');
+  startTimeMs = row?.start_time ?? null;
+  document.getElementById('raceNamn').value = row?.namn ?? '';
+  if (startTimeMs) {
+    const d = new Date(startTimeMs);
+    document.getElementById('startTime').value = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  }
+  renderCountdown();
+}
+
+async function saveRaceNamn() {
+  const namn = document.getElementById('raceNamn').value.trim();
+  await api('/api/admin/race-settings', { method: 'PUT', body: JSON.stringify({ namn }) });
+}
+
+async function uploadGpx() {
+  const file = document.getElementById('gpxFile').files[0];
+  if (!file) return;
+  const gpx = await file.text();
+  await api('/api/admin/race-settings', { method: 'PUT', body: JSON.stringify({ gpx }) });
+  document.getElementById('gpxStatus').textContent = 'Sparat!';
+  loadGpxOnMap();
+}
+
+async function loadArchives() {
+  const rows = await api('/api/admin/archives');
+  document.getElementById('archives').innerHTML = rows.map(a =>
+    `<li><a href="/archive/${a.id}">${a.namn || '(namnlöst lopp)'} — ${new Date(a.archived_at).toLocaleString()}</a></li>`
+  ).join('') || '<li>Inga arkiverade lopp ännu.</li>';
+}
+
+async function resetRace() {
+  if (!confirm('Detta arkiverar och raderar ALL aktiv tävlingsdata (deltagare, stationer, funktionärer, tider). Fortsätt?')) return;
+  await api('/api/admin/reset', { method: 'POST' });
+  await Promise.all([loadUnknown(), loadParticipants(), loadStations(), loadFunktionarer(), loadStartTime(), loadArchives()]);
+}
+
+async function setStartTime(startTime) {
+  await api('/api/admin/race-settings', { method: 'PUT', body: JSON.stringify({ startTime }) });
+  startTimeMs = startTime;
+  renderCountdown();
+}
+
+function startNow() { setStartTime(Date.now()); }
+
+function startIn() {
+  const seconds = parseInt(document.getElementById('startInSeconds').value, 10);
+  if (!seconds) return;
+  setStartTime(Date.now() + seconds * 1000);
+}
+
+function saveStartTime() {
+  const val = document.getElementById('startTime').value;
+  setStartTime(val ? new Date(val).getTime() : null);
+}
+
+setInterval(renderCountdown, 1000);
+loadGpxOnMap();
+Promise.all([loadUnknown(), loadParticipants(), loadStations(), loadFunktionarer(), loadStartTime(), loadArchives()]).catch(e => alert(e.message));
+</script>
+</body>
+</html>

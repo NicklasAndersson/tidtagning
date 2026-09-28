@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<title>QR-utskrift</title>
+<style>
+  @page { size: A4; margin: 15mm; }
+  body { font-family: sans-serif; margin: 2rem; }
+  #controls { margin-bottom: 1.5rem; }
+  #controls input { width: 4rem; }
+  /* 180mm = A4-bredd minus 2x15mm marginal. Kolumnbredden är alltid ett heltalsbrott av det,
+     så raderna fyller sidans bredd exakt utan rest, både på skärm och i utskrift. */
+  #grid, #funktionarGrid { display: grid; gap: 4mm; width: 180mm; }
+  .card { border: 1px solid #ccc; text-align: center; padding: 2mm; box-sizing: border-box; break-inside: avoid; page-break-inside: avoid; }
+  .card img { width: 100%; height: auto; display: block; }
+  .card div { font-size: 0.9em; font-weight: bold; margin-top: 0.25rem; }
+  @media print { #controls, hr { display: none; } body { margin: 0; } .card { border: none; } }
+</style>
+</head>
+<body>
+  <div id="controls">
+    <label>Från startnummer: <input id="from" type="number" value="1"></label>
+    <label>Till: <input id="to" type="number" value="20"></label>
+    <label>Bas-URL: <input id="baseUrl" size="30" value="https://lopp.wwn.se/l"></label>
+    <label>Storlek:
+      <select id="qrSize">
+        <option value="liten">Liten (många per sida)</option>
+        <option value="normal" selected>Normal</option>
+        <option value="stor">Stor (skanna på håll)</option>
+        <option value="extrastor">Extra stor</option>
+      </select>
+    </label>
+    <button onclick="render()">Generera</button>
+    <button onclick="window.print()">Skriv ut</button>
+  </div>
+  <div id="grid"></div>
+
+  <hr>
+  <div id="controls">
+    <button onclick="renderFunktionarer()">Skriv ut funktionärskort</button>
+    <span>(kräver admin-inloggning)</span>
+  </div>
+  <div id="funktionarGrid"></div>
+
+<script>
+// ponytail: QR-bilderna genereras av qr.wwn.se (extern tjänst), ingen egen QR-lib behövs
+// Kortbredden i mm delar alltid 180mm jämnt (180 = 6x30 = 4x45 = 3x60 = 2x90), så raden fylls
+// exakt utan rest oavsett storleksval. Pixelstorleken följer ~300dpi för skarp utskrift.
+const mmToPixels = (mm) => Math.round((mm / 25.4) * 300);
+const SIZE_PRESETS = {
+  liten: { mm: 30 },
+  normal: { mm: 45 },
+  stor: { mm: 60 },
+  extrastor: { mm: 90 },
+};
+
+function qrUrl(data, pixels) {
+  const params = new URLSearchParams({ data, size: String(pixels), format: 'png', errorCorrectionLevel: 'L' });
+  return `https://qr.wwn.se/api/qr?${params}`;
+}
+
+function applyGridSize(gridEl, preset) {
+  const columns = 180 / preset.mm; // heltal by design, se presets ovan
+  // 1fr delar containerns 180mm jämnt MELLAN gapsen, till skillnad från fasta mm-spår
+  // (som skulle lägga gapsen ovanpå 180mm och svämma över kanten)
+  gridEl.style.gridTemplateColumns = `repeat(${columns}, 1fr)`;
+}
+
+async function render() {
+  const from = parseInt(document.getElementById('from').value, 10);
+  const to = parseInt(document.getElementById('to').value, 10);
+  const baseUrl = document.getElementById('baseUrl').value;
+  const preset = SIZE_PRESETS[document.getElementById('qrSize').value];
+  const grid = document.getElementById('grid');
+  grid.innerHTML = '';
+  applyGridSize(grid, preset);
+
+  const results = await fetch('/api/results').then(r => r.json()).catch(() => []);
+  const namesByStartnummer = new Map(results.map(r => [r.startnummer, r.namn]));
+
+  for (let n = from; n <= to; n++) {
+    const card = document.createElement('div');
+    card.className = 'card';
+    const img = document.createElement('img');
+    img.src = qrUrl(`${baseUrl}/${n}`, mmToPixels(preset.mm));
+    card.appendChild(img);
+    const label = document.createElement('div');
+    const namn = namesByStartnummer.get(String(n));
+    label.textContent = namn ? `#${n} ${namn}` : '#' + n;
+    card.appendChild(label);
+    grid.appendChild(card);
+  }
+}
+render();
+
+async function renderFunktionarer() {
+  const rows = await fetch('/api/admin/funktionarer').then(r => r.json());
+  const preset = SIZE_PRESETS[document.getElementById('qrSize').value];
+  const grid = document.getElementById('funktionarGrid');
+  grid.innerHTML = '';
+  applyGridSize(grid, preset);
+  for (const f of rows) {
+    const card = document.createElement('div');
+    card.className = 'card';
+    const img = document.createElement('img');
+    img.src = qrUrl(`${location.origin}/scan/${f.token}`, mmToPixels(preset.mm));
+    card.appendChild(img);
+    const label = document.createElement('div');
+    label.textContent = `${f.station_namn}${f.namn ? ' — ' + f.namn : ''}`;
+    card.appendChild(label);
+    grid.appendChild(card);
+  }
+}
+</script>
+</body>
+</html>

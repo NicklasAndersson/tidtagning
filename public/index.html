@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lopp – live</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="/app.css">
+<style>
+  .topbar-inner { max-width: none; }
+  .dash { display: grid; gap: 1rem; padding: 1rem; max-width: none; width: 100%; margin: 0; }
+  .clock { text-align: center; margin: 0; order: -1; }
+  .clock h1 { margin: 0; font-size: clamp(1.2rem, 2.2vw, 2.2rem); }
+  #clockLabel { color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; font-size: clamp(0.8rem, 1vw, 1.1rem); margin-top: 0.5rem; }
+  #clock { font-size: clamp(3rem, 6vw, 7rem); font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.1; color: var(--brand); }
+  #summary { color: var(--muted); font-size: clamp(0.85rem, 1vw, 1.1rem); }
+  #map { height: 50vh; min-height: 300px; border: 1px solid var(--line); }
+  .board { margin: 0; padding: 0.5rem 0; display: flex; flex-direction: column; min-height: 0; }
+  .board h2 { padding: 0.5rem 1.25rem 0; }
+  .board .scroll { overflow-y: auto; min-height: 0; }
+  .board table { margin: 0; font-size: clamp(0.95rem, 1.1vw, 1.3rem); }
+  .board td, .board th { padding: 0.55rem 0.6rem; }
+  .board td:first-child { padding-left: 1.25rem; }
+  .board td:last-child { padding-right: 1.25rem; }
+  .status { white-space: nowrap; }
+  .board td { font-variant-numeric: tabular-nums; }
+  .pos { width: 2.5rem; font-weight: 700; color: var(--brand); }
+  .klass { display: block; font-size: 0.8em; color: var(--muted); }
+  .time { text-align: right; font-weight: 600; white-space: nowrap; }
+  tr.done .status { color: var(--brand); font-weight: 600; }
+  .board .more { display: block; padding: 0.5rem 1.25rem; }
+
+  /* Bred skärm/TV: karta till vänster, klocka + topplista till höger, allt på en skärm utan scroll */
+  @media (min-width: 900px) {
+    body { height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+    .dash { flex: 1; min-height: 0; grid-template-columns: 1fr minmax(360px, 34%); grid-template-rows: auto 1fr; }
+    #map { grid-row: 1 / span 2; grid-column: 1; height: auto; min-height: 0; }
+    .clock, .board { grid-column: 2; }
+    .board { min-height: 0; }
+  }
+</style>
+</head>
+<body>
+<script src="/nav.js"></script>
+<main class="dash">
+  <div id="map"></div>
+  <section class="card clock">
+    <h1 id="raceName">Lopp</h1>
+    <div id="clockLabel"></div>
+    <div id="clock">–</div>
+    <div id="summary"></div>
+  </section>
+  <section class="card board">
+    <h2>Ledarlista</h2>
+    <div class="scroll">
+      <table><tbody id="board"></tbody></table>
+    </div>
+    <a class="more" href="/results">Alla resultat och mellantider &rarr;</a>
+  </section>
+</main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-gpx@1.7.0/gpx.js"></script>
+<script src="/livemap.js"></script>
+<script>
+initLiveMap('map');
+
+let startTime = null;
+let stations = [];
+
+function fmt(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return [Math.floor(s / 3600), Math.floor((s % 3600) / 60), s % 60].map(n => String(n).padStart(2, '0')).join(':');
+}
+
+function tick() {
+  const label = document.getElementById('clockLabel');
+  const clock = document.getElementById('clock');
+  if (!startTime) { label.textContent = 'Starttid ej satt'; clock.textContent = '–'; return; }
+  const diff = startTime - Date.now();
+  label.textContent = diff > 0 ? 'Start om' : 'Tid sedan start';
+  clock.textContent = fmt(Math.abs(diff));
+}
+
+// Längst kommen = passerat stationen längst fram längs banan (/api/stations är sorterad på ordning).
+// Lika långt kommen: den som var där först leder.
+function standings(results) {
+  const finishId = stations.find(s => s.typ === 'mal')?.id;
+  return results.map(r => {
+    const reached = stations.findLastIndex(s => r.times[s.id]);
+    const furthest = stations[reached];
+    return {
+      ...r,
+      finish: finishId ? r.times[finishId] : undefined,
+      count: Object.keys(r.times).length,
+      reached,
+      lastTime: furthest ? r.times[furthest.id] : undefined,
+      lastStation: furthest?.namn ?? null,
+    };
+  }).sort((a, b) =>
+    (a.finish && b.finish) ? a.finish - b.finish :
+    a.finish ? -1 : b.finish ? 1 :
+    b.reached - a.reached || (a.lastTime ?? Infinity) - (b.lastTime ?? Infinity) || a.namn.localeCompare(b.namn)
+  );
+}
+
+function renderBoard(rows) {
+  let place = 0;
+  document.getElementById('board').innerHTML = rows.map(r => {
+    const t = r.finish ?? r.lastTime;
+    const time = t ? (startTime ? fmt(t - startTime) : new Date(t).toLocaleTimeString()) : '';
+    const status = r.finish ? 'I mål' : r.lastStation ? esc(r.lastStation) : 'Ej passerat';
+    return `<tr class="${r.finish ? 'done' : ''}">
+      <td class="pos">${r.finish ? ++place + '.' : ''}</td>
+      <td><a href="/l/${encodeURIComponent(r.startnummer)}">${esc(r.namn)}</a>${r.klass ? `<span class="klass">${esc(r.klass)}</span>` : ''}</td>
+      <td class="status">${status}</td>
+      <td class="time">${time}</td>
+    </tr>`;
+  }).join('') || '<tr><td class="muted">Inga deltagare ännu.</td></tr>';
+
+  const done = rows.filter(r => r.finish).length;
+  const out = rows.filter(r => !r.finish && r.count).length;
+  document.getElementById('summary').textContent = rows.length ? `${rows.length} deltagare · ${out} på banan · ${done} i mål` : '';
+}
+
+async function load() {
+  const [st, settings, results] = await Promise.all([
+    fetch('/api/stations').then(r => r.json()),
+    fetch('/api/race-settings').then(r => r.json()),
+    fetch('/api/results').then(r => r.json()),
+  ]);
+  stations = st;
+  startTime = settings?.start_time || null;
+  if (settings?.namn) {
+    document.getElementById('raceName').textContent = settings.namn;
+    document.title = `${settings.namn} – live`;
+  }
+  tick();
+  renderBoard(standings(results));
+}
+
+load();
+setInterval(load, 10000);
+setInterval(tick, 1000);
+</script>
+</body>
+</html>

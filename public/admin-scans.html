@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin — Skanningar</title>
+<link rel="stylesheet" href="/app.css">
+<style>td { white-space: nowrap; }</style>
+</head>
+<body>
+<script src="/nav.js" data-menu="admin"></script>
+<main>
+<h1>Skanningar</h1>
+<div class="card">
+<p class="muted">Alla passeringar, senaste 500, med vem som skannade och koordinater när de finns.</p>
+<div class="table-wrap"><table>
+  <thead><tr><th>Startnr</th><th>Namn</th><th>Station</th><th>Tid</th><th>Skannad av</th><th>Koordinater</th></tr></thead>
+  <tbody id="body"></tbody>
+</table></div>
+</div>
+</main>
+
+<script>
+async function load() {
+  const res = await fetch('/api/admin/scans');
+  if (!res.ok) throw new Error(await res.text());
+  const rows = await res.json();
+  document.getElementById('body').innerHTML = rows.map(r => {
+    const coords = r.lat != null && r.long != null
+      ? `<a href="https://www.google.com/maps?q=${r.lat},${r.long}" target="_blank">${r.lat.toFixed(5)}, ${r.long.toFixed(5)}</a>`
+      : '–';
+    return `<tr><td>#${r.runner_id}</td><td>${r.namn || 'Okänd'}</td><td>${r.station_id}</td>` +
+      `<td>${new Date(r.timestamp).toLocaleString()}</td><td>${r.scanned_by || '–'}</td><td>${coords}</td></tr>`;
+  }).join('');
+}
+
+load().catch(e => alert(e.message));
+</script>
+</body>
+</html>

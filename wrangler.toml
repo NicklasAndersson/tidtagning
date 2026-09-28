@@ -1,0 +1,17 @@
+name = "tidtagning"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+workers_dev = true
+
+[[routes]]
+pattern = "lopp.wwn.se"
+custom_domain = true
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "tidtagning"
+database_id = "644b50da-1de3-4f2a-956e-801cbf8b3d66"

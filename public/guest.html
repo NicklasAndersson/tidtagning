@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Löpare</title>
+<link rel="stylesheet" href="/app.css">
+<style>
+  main { max-width: 560px; }
+  h1 { margin-bottom: 0.2rem; }
+  #klass { color: var(--muted); margin-bottom: 1.25rem; }
+  textarea { width: 100%; resize: vertical; }
+  .card button { margin-top: 0.5rem; width: 100%; padding: 0.7rem; }
+  #status { margin-top: 0.5rem; }
+  #timeline div { padding: 0.6rem 0; border-bottom: 1px solid var(--line); }
+  #timeline div:last-child { border-bottom: none; }
+  #timeline time { color: var(--muted); font-size: 0.85rem; }
+  #timeline .official { font-weight: 600; }
+</style>
+</head>
+<body>
+<script src="/nav.js"></script>
+<main>
+  <h1 id="namn">Löpare</h1>
+  <div id="klass"></div>
+
+  <div class="card">
+    <p>Heja på löparen! Din plats loggas bara om du tillåter det.</p>
+    <textarea id="kommentar" rows="3" placeholder="Skriv ett hejarop…"></textarea>
+    <button onclick="sendComment()">Skicka hejarop</button>
+    <div id="status" class="status"></div>
+  </div>
+
+  <div class="card">
+    <h2>Tidslinje</h2>
+    <div id="timeline"></div>
+  </div>
+</main>
+
+<script>
+const runnerId = location.pathname.split('/').filter(Boolean).pop();
+
+function getPosition() {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) return resolve(null);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ lat: pos.coords.latitude, long: pos.coords.longitude }),
+      () => resolve(null), // nekat/otillgängligt — rapporten går igenom ändå utan plats
+      { timeout: 5000 }
+    );
+  });
+}
+
+async function report(kommentar) {
+  const pos = await getPosition();
+  await fetch('/api/guest-report', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ runnerId, timestamp: Date.now(), kommentar, lat: pos?.lat, long: pos?.long }),
+  });
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+}
+
+// Kronologisk tidslinje som blandar officiella mellantider med gästernas hejarop (krav 5.1)
+async function loadTimeline() {
+  const [comments, results, stations] = await Promise.all([
+    fetch(`/api/guest-reports/${encodeURIComponent(runnerId)}`).then(r => r.json()),
+    fetch('/api/results').then(r => r.json()),
+    fetch('/api/stations').then(r => r.json()),
+  ]);
+  const stationNamn = new Map(stations.map(s => [s.id, s.namn]));
+  const runner = results.find(r => r.startnummer === runnerId);
+
+  const entries = [
+    ...comments.map(c => ({ timestamp: c.timestamp, html: escapeHtml(c.kommentar) })),
+    ...(runner ? Object.entries(runner.times).map(([stationId, timestamp]) =>
+      ({ timestamp, html: `<span class="official">Passerade ${stationNamn.get(stationId) || stationId}</span>` })
+    ) : []),
+  ].sort((a, b) => a.timestamp - b.timestamp);
+
+  document.getElementById('timeline').innerHTML = entries.map(e =>
+    `<div><time>${new Date(e.timestamp).toLocaleString()}</time><br>${e.html}</div>`
+  ).join('') || '<p>Inget har hänt än.</p>';
+}
+
+async function sendComment() {
+  const text = document.getElementById('kommentar').value.trim();
+  if (!text) return;
+  await report(text);
+  document.getElementById('kommentar').value = '';
+  document.getElementById('status').textContent = 'Tack för hejaropet!';
+  loadTimeline();
+}
+
+async function init() {
+  const p = await fetch(`/api/participant/${encodeURIComponent(runnerId)}`).then(r => r.json());
+  document.getElementById('namn').textContent = p.namn || `Löpare #${runnerId}`;
+  document.getElementById('klass').textContent = p.klass || '';
+  report(null); // logga tid + plats direkt vid öppning, utan kommentar
+  loadTimeline();
+}
+
+init();
+</script>
+</body>
+</html>

@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Resultat</title>
+<link rel="stylesheet" href="/app.css">
+<style>
+  #countdown { font-size: 1.5rem; font-weight: 700; margin-bottom: 1rem; color: var(--brand); }
+  #countdown:empty { display: none; }
+  th { cursor: pointer; user-select: none; white-space: nowrap; }
+  td { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .finish { font-weight: 700; }
+  .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 0.75rem; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<script src="/nav.js"></script>
+<main>
+<h1 id="title">Resultat</h1>
+<div id="countdown"></div>
+<div class="card">
+<div class="toolbar">
+  <select id="klassFilter"><option value="">Alla klasser</option></select>
+  <span class="muted">Uppdateras automatiskt</span>
+</div>
+<div class="table-wrap"><table>
+  <thead><tr id="headerRow"><th data-sort="namn">Namn</th><th data-sort="klass">Klass</th></tr></thead>
+  <tbody id="body"></tbody>
+</table></div>
+</div>
+</main>
+
+<script>
+let stations = [];
+let results = [];
+let startTime = null;
+let sortKey = 'finish';
+
+function fmtElapsed(ms) {
+  const s = Math.floor(ms / 1000);
+  const hh = String(Math.floor(s / 3600)).padStart(2, '0');
+  const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+  const ss = String(s % 60).padStart(2, '0');
+  return `${hh}:${mm}:${ss}`;
+}
+
+function cellFor(runner, stationId) {
+  const t = runner.times[stationId];
+  if (!t) return '';
+  return startTime ? fmtElapsed(t - startTime) : new Date(t).toLocaleTimeString();
+}
+
+function finishStationId() {
+  return stations.find(s => s.typ === 'mal')?.id;
+}
+
+function render() {
+  const header = document.getElementById('headerRow');
+  header.innerHTML = '<th data-sort="namn">Namn</th><th data-sort="klass">Klass</th>' +
+    stations.map(s => `<th data-sort="${s.id}">${s.namn}</th>`).join('');
+  header.querySelectorAll('th').forEach(th => th.onclick = () => { sortKey = th.dataset.sort; render(); });
+
+  const klass = document.getElementById('klassFilter').value;
+  const finishId = finishStationId();
+  let rows = results.filter(r => !klass || r.klass === klass);
+
+  rows.sort((a, b) => {
+    if (sortKey === 'finish') {
+      const at = finishId ? a.times[finishId] : undefined;
+      const bt = finishId ? b.times[finishId] : undefined;
+      if (at && bt) return at - bt;
+      if (at) return -1;
+      if (bt) return 1;
+      return a.namn.localeCompare(b.namn);
+    }
+    if (sortKey === 'namn' || sortKey === 'klass') return (a[sortKey] || '').localeCompare(b[sortKey] || '');
+    const at = a.times[sortKey], bt = b.times[sortKey];
+    if (at && bt) return at - bt;
+    return at ? -1 : bt ? 1 : 0;
+  });
+
+  const tbody = document.getElementById('body');
+  tbody.innerHTML = rows.map(r => `<tr><td><a href="/l/${encodeURIComponent(r.startnummer)}">${escapeHtml(r.namn)}</a></td><td>${escapeHtml(r.klass)}</td>` +
+    stations.map(s => `<td class="${s.id === finishId ? 'finish' : ''}">${cellFor(r, s.id)}</td>`).join('') +
+    '</tr>').join('');
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+}
+
+function renderKlassOptions() {
+  const select = document.getElementById('klassFilter');
+  const current = select.value;
+  const klasses = [...new Set(results.map(r => r.klass).filter(Boolean))].sort();
+  select.innerHTML = '<option value="">Alla klasser</option>' + klasses.map(k => `<option value="${k}">${k}</option>`).join('');
+  select.value = current;
+}
+
+function updateCountdown() {
+  const el = document.getElementById('countdown');
+  if (!startTime) { el.textContent = ''; return; }
+  const diff = startTime - Date.now();
+  el.textContent = diff > 0 ? `Start om ${fmtElapsed(diff)}` : '';
+}
+
+async function load() {
+  const [stationsRes, settingsRes, resultsRes] = await Promise.all([
+    fetch('/api/stations').then(r => r.json()),
+    fetch('/api/race-settings').then(r => r.json()),
+    fetch('/api/results').then(r => r.json()),
+  ]);
+  stations = stationsRes;
+  startTime = settingsRes?.start_time || null;
+  if (settingsRes?.namn) document.getElementById('title').textContent = settingsRes.namn;
+  results = resultsRes;
+  renderKlassOptions();
+  render();
+}
+
+document.getElementById('klassFilter').onchange = render;
+load();
+setInterval(load, 5000);
+setInterval(updateCountdown, 1000);
+</script>
+</body>
+</html>
