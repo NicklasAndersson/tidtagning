@@ -10,7 +10,7 @@ Live: <https://lopp.wwn.se>
 
 ## Funktioner
 
-- **Offline-först skanner.** Varje skanning sparas direkt i telefonens IndexedDB med telefonens klocka och synkas till servern när nätet finns. Kamera (BarcodeDetector) eller manuell sifferinmatning.
+- **Offline-först skanner.** Varje skanning sparas direkt i telefonens IndexedDB med telefonens klocka och synkas till servern när nätet finns. Kamera (BarcodeDetector) eller manuell sifferinmatning. Grön blink och hög ton vid registrerad skanning, låg ton om den redan fanns.
 - **Första tiden gäller.** Samma löpare på samma station flera gånger ger bara en tid (PRIMARY KEY + `INSERT OR IGNORE`).
 - **Okända nummerlappar.** En okänd QR-kod skannas ändå in och syns i admin som "Okänd #nr" tills den kopplas till en deltagare.
 - **Funktionärskort.** Varje funktionär får en QR-länk (`/scan/<token>`) som öppnar skannern låst till rätt station.
@@ -18,7 +18,7 @@ Live: <https://lopp.wwn.se>
 - **Karta.** GPX-spåret ritas ut tillsammans med stationerna. Varje löpare visas vid sin senast kända position: stationens fasta koordinater vid officiell skanning, annars funktionärens eller gästens GPS.
 - **Ledarlista.** Löpare i mål sorteras på måltid. Övriga sorteras på hur långt längs banan de kommit (stationernas *ordning*), sedan på vem som var först dit.
 - **Gästrapporter.** Publiken som skannar en nummerlapp hamnar på löparens sida, kan skicka hejarop och (frivilligt) dela sin position. Påverkar aldrig officiella tider.
-- **Arkivering.** "Arkivera och nollställ" sparar resultatet som en fristående HTML-sida och tömmer all tävlingsdata inför nästa lopp.
+- **Arkivering.** "Arkivera och nollställ" sparar loppet (resultat, mellantider, karta med GPX och stationer, samt löparsidor med publikens kommentarer) som en fristående HTML-sida på en publik länk och tömmer all tävlingsdata inför nästa lopp.
 
 ## Sidor
 
@@ -33,7 +33,7 @@ Live: <https://lopp.wwn.se>
 | `/print` | Arrangör | Utskrift av QR-koder för nummerlappar (rutnät eller "Nummerlapp": två per A4 med loppnamn och logga) och funktionärskort |
 | `/scanner` | Funktionär | Skannern (installerbar PWA) |
 | `/scan/<token>` | Funktionär | Funktionärskortets länk, skickar vidare till en låst skanner |
-| `/archive/<id>` | Arrangör | Nedladdning av ett arkiverat lopp som HTML |
+| `/archive/<id>` | Publik | Arkiverat lopp: karta, resultat och löparsidor med hejarop (`?download` ger filen) |
 
 Admin-API:t (`/api/admin/*`) skyddas med Basic Auth, med ett gemensamt användarnamn och lösenord för arrangörerna. Själva admin-sidorna är statiska. Webbläsaren frågar efter inloggning första gången de anropar API:t.
 

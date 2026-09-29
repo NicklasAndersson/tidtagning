@@ -10,7 +10,7 @@ Live: <https://lopp.wwn.se>
 
 ## Features
 
-- **Offline-first scanner.** Every scan is stored immediately in the phone's IndexedDB with the phone's clock and synced to the server when a connection is available. Camera (BarcodeDetector) or manual number entry.
+- **Offline-first scanner.** Every scan is stored immediately in the phone's IndexedDB with the phone's clock and synced to the server when a connection is available. Camera (BarcodeDetector) or manual number entry. Green flash and a high beep for a recorded scan, a low beep if it already existed.
 - **First time wins.** Scanning the same runner at the same station several times yields one time (PRIMARY KEY + `INSERT OR IGNORE`).
 - **Unknown bibs.** An unknown QR code is still recorded and shows up in admin as "Okänd #nr" until it is linked to a participant.
 - **Marshal cards.** Each marshal gets a QR link (`/scan/<token>`) that opens the scanner locked to the right station.
@@ -19,7 +19,7 @@ Live: <https://lopp.wwn.se>
 - **Leaderboard.** Finished runners are sorted by finish time. The rest are sorted by how far along the course they are (station *order*), then by who got there first.
 - **Guest reports.** Spectators who scan a bib land on the runner's page, can send a cheer and (optionally) share their position. This never affects official times.
 - **Race logo.** An optional logo is shown in the top menu on every page and included in the archive.
-- **Archiving.** "Arkivera och nollställ" (archive and reset) saves the results as a standalone HTML page, including the logo, and clears all race data for the next race.
+- **Archiving.** "Arkivera och nollställ" (archive and reset) saves the race (results, split times, map with GPX and stations, and runner pages with spectator comments) as a standalone HTML page on a public link, including the logo, and clears all race data for the next race.
 
 ## Pages
 
@@ -34,7 +34,7 @@ Live: <https://lopp.wwn.se>
 | `/print` | Organizer | Print QR codes for bibs (grid, or "Nummerlapp" mode: two per A4 with race name and logo) and marshal cards |
 | `/scanner` | Marshal | The scanner (installable PWA) |
 | `/scan/<token>` | Marshal | Marshal card link, redirects to a locked scanner |
-| `/archive/<id>` | Organizer | Download an archived race as HTML |
+| `/archive/<id>` | Public | Archived race: map, results and runner pages with cheers (`?download` gives the file) |
 
 The admin API (`/api/admin/*`) is protected with Basic Auth, using one shared username and password for the organizers. The admin pages themselves are static. The browser asks for credentials the first time they call the API.
 

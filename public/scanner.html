@@ -12,6 +12,7 @@
   #flash { position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity 120ms; }
   #flash.green { background: #1db95466; opacity: 1; }
   #flash.gray { background: #88888866; opacity: 1; }
+  #top, #progress, #log { z-index: 1; } /* ovanför videon, annars går knapparna inte att trycka på */
   #log { position: absolute; bottom: 0; width: 100%; max-height: 30vh; overflow-y: auto; background: #000c; font-size: 0.9rem; }
   #log div { padding: 0.3rem 0.6rem; border-bottom: 1px solid #333; }
   #top { position: absolute; top: 0; left: 0; right: 0; display: flex; gap: 0.5rem; align-items: center; background: #000a; padding: 0.4rem 0.6rem; font-size: 0.85rem; }
@@ -20,6 +21,7 @@
   #progress { position: absolute; top: 2.2rem; left: 0; right: 0; background: #000a; padding: 0.3rem 0.6rem; font-size: 0.8rem; max-height: 20vh; overflow-y: auto; }
   #progress .count { font-weight: bold; }
   #manualBtn { margin-left: 0.5rem; }
+  #soundBtn, #vibrateBtn { padding: 0.15rem 0.4rem; }
   #keypad { position: absolute; inset: 0; background: #111; z-index: 10; display: none; flex-direction: column; align-items: center; justify-content: center; }
   #keypad.open { display: flex; }
   #keypadDisplay { font-size: 3rem; color: #fff; min-height: 4rem; margin-bottom: 1rem; letter-spacing: 0.1em; }
@@ -35,6 +37,8 @@
   <div id="top">
     Station: <input id="stationId" value="mal" list="stationsList" /><datalist id="stationsList"></datalist>
     <button id="manualBtn">Manuell inmatning</button>
+    <button id="soundBtn" aria-label="Ljud"></button>
+    <button id="vibrateBtn" aria-label="Vibration"></button>
     <span id="status">startar kamera…</span>
   </div>
   <div id="progress"></div>
@@ -92,7 +96,22 @@ function allScans(db) {
   });
 }
 
+// Ljudfeedback (krav 6.1): hög ton = registrerad, låg ton = redan registrerad. Tyst om webbläsaren nekar ljud.
+let audioCtx;
+function beep(freq) {
+  if (!prefs.sound) return;
+  try {
+    audioCtx ??= new AudioContext();
+    const osc = audioCtx.createOscillator();
+    osc.frequency.value = freq;
+    osc.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.12);
+  } catch {}
+}
+
 function flash(color) {
+  beep(color === 'green' ? 880 : 330);
   const el = document.getElementById('flash');
   el.className = color;
   setTimeout(() => { el.className = ''; }, 250);
@@ -105,38 +124,91 @@ function log(text) {
   el.prepend(row);
 }
 
-// Matchar startnummer i slutet av QR-URL:en, t.ex. https://.../l/42
+// Startnummer ur löparens QR (https://.../l/42, även med / eller ?query efter) eller ett rent nummer.
+// Funktionärskort (/scan/...) ignoreras; annan okänd text sparas ändå (krav 4.2 "inga felmeddelanden").
 function extractRunnerId(text) {
-  const m = text.match(/\/(\d+)\s*$/);
+  text = text.trim();
+  if (text.includes('/scan/')) return null;
+  const m = text.match(/\/l\/(\d+)/) || text.match(/\/(\d+)\/?$/);
   return m ? m[1] : text;
 }
 
+// Sparas lokalt så att skannern vet starttid och stationer även om sidan laddas om utan täckning
+const cached = (key, fallback) => { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } };
+const cache = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} };
+
+// Ljud och vibration kan slås av per telefon (sparas lokalt, på som standard)
+const prefs = cached('prefs', {});
+prefs.sound ??= true;
+prefs.vibrate ??= true;
+for (const [key, on, off] of [['sound', '🔊', '🔇'], ['vibrate', '📳', '📴']]) {
+  const btn = document.getElementById(key + 'Btn');
+  const paint = () => { btn.textContent = prefs[key] ? on : off; btn.setAttribute('aria-pressed', prefs[key]); };
+  if (key === 'vibrate' && !navigator.vibrate) btn.hidden = true; // iOS saknar vibration
+  btn.onclick = () => { prefs[key] = !prefs[key]; cache('prefs', prefs); paint(); };
+  paint();
+}
+let raceStart = cached('raceStart', 0);
+
+// Tider tas från serverns klocka: telefonens avvikelse mäts när det finns nät och sparas, så att
+// skanningar utan täckning ändå hamnar på servertid (senast kända avvikelse). Aldrig uppmätt → telefonens klocka.
+let clockOffset = cached('clockOffset', 0);
+async function syncClock() {
+  const t0 = Date.now();
+  const { now } = await fetch('/api/time', { cache: 'no-store' }).then(r => r.json());
+  const t1 = Date.now();
+  if (t1 - t0 < 2000) { clockOffset = Math.round(now - (t0 + t1) / 2); cache('clockOffset', clockOffset); }
+}
+const serverNow = () => Date.now() + clockOffset;
+let stations = cached('stations', []);
+let statusText = 'startar kamera…';
+let pendingCount = 0;
+
+function renderStatus() {
+  const stationId = document.getElementById('stationId').value.trim();
+  const unknown = stations.length > 0 && !stations.some(s => s.id === stationId);
+  const el = document.getElementById('status');
+  el.textContent = statusText +
+    (pendingCount ? ` · ${pendingCount} ej synkade` : ' · allt synkat') +
+    (unknown ? ' · ⚠ okänd station' : '');
+  el.style.color = unknown ? '#f66' : pendingCount ? '#fc6' : '';
+}
+
+let syncing = false;
 async function syncPending(db) {
-  if (!navigator.onLine) return;
-  const scans = await allScans(db);
-  for (const scan of scans.filter(s => !s.synced)) {
-    try {
+  if (syncing) return; // intervall + direkt efter skanning får inte köra samtidigt
+  syncing = true;
+  try {
+    for (const scan of (await allScans(db)).filter(s => !s.synced)) {
       const res = await fetch('/api/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(scan),
       });
-      if (res.ok) await putScan(db, { ...scan, synced: true });
-    } catch {
-      break; // fortfarande offline, försök igen vid nästa tick
+      // Markera bara som synkad om posten inte ersatts av en ny skanning under tiden
+      if (res.ok && (await getScan(db, scan.runnerId, scan.stationId))?.timestamp === scan.timestamp) {
+        await putScan(db, { ...scan, synced: true });
+      }
     }
+  } catch {
+    // offline, försök igen vid nästa tick
+  } finally {
+    syncing = false;
+    pendingCount = (await allScans(db)).filter(s => !s.synced).length;
+    renderStatus();
   }
 }
 
 // Native BarcodeDetector (Chrome/Edge/Samsung) är snabbast och används när den finns.
 // Firefox/Safari saknar den helt, så där laddas zxing-wasm som fallback (samma detect()-form).
-async function makeDetector(video, status) {
+async function makeDetector(video) {
   if ('BarcodeDetector' in window) {
     const native = new BarcodeDetector({ formats: ['qr_code'] });
     return { detect: () => native.detect(video), tickDelay: 0 };
   }
 
-  status.textContent = 'BarcodeDetector saknas — laddar WASM-fallback…';
+  statusText = 'laddar WASM-skanner…';
+  renderStatus();
   const { readBarcodes } = await import('https://cdn.jsdelivr.net/npm/zxing-wasm@3.1.4/dist/es/reader/index.js');
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -157,8 +229,14 @@ async function makeDetector(video, status) {
 // plus hur många av de anmälda som saknas (om det finns en deltagarlista och den inte är för lång)
 async function refreshProgress(stationInput) {
   const el = document.getElementById('progress');
+  syncClock().catch(() => {});
   try {
-    const results = await fetch('/api/results').then(r => r.json());
+    const [results, settings] = await Promise.all([
+      fetch('/api/results').then(r => r.json()),
+      fetch('/api/race-settings').then(r => r.json()),
+    ]);
+    raceStart = settings?.start_time || 0;
+    cache('raceStart', raceStart);
     const stationId = stationInput.value.trim();
     const scannedHere = results.filter(r => r.times[stationId]);
     const roster = results.filter(r => r.known);
@@ -183,10 +261,34 @@ async function refreshProgress(stationInput) {
   }
 }
 
+function fillStationList(stationInput) {
+  const list = document.getElementById('stationsList');
+  list.innerHTML = '';
+  const finish = stations.find(s => s.typ === 'mal');
+  if (!stationInput.readOnly && finish && !stations.some(s => s.id === stationInput.value)) stationInput.value = finish.id;
+  for (const s of stations) {
+    const opt = document.createElement('option');
+    opt.value = s.id;
+    opt.label = s.namn;
+    list.appendChild(opt);
+  }
+  renderStatus();
+}
+
+// Skärmen får inte slockna (kameran stannar då); låset släpps när fliken döljs och tas igen vid återkomst
+function keepAwake(video) {
+  const lock = () => navigator.wakeLock?.request('screen').catch(() => {});
+  lock();
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') { lock(); video.play().catch(() => {}); }
+  });
+}
+
 async function main() {
-  const status = document.getElementById('status');
   const video = document.getElementById('video');
   const stationInput = document.getElementById('stationId');
+  navigator.serviceWorker?.register('/sw.js'); // sidan går att ladda om utan täckning
+  navigator.storage?.persist?.(); // be webbläsaren att inte rensa IndexedDB vid platsbrist
 
   // Funktionärskort (/scan/:token) skickar hit med ?station=...&stationName=...&scannedBy=..., låser fältet
   const params = new URLSearchParams(location.search);
@@ -194,8 +296,11 @@ async function main() {
   if (params.get('station')) {
     stationInput.value = params.get('station');
     stationInput.readOnly = true;
-    document.getElementById('top').insertAdjacentHTML('afterbegin', `<b>${params.get('stationName') || params.get('station')}</b>`);
+    const b = document.createElement('b');
+    b.textContent = params.get('stationName') || params.get('station');
+    document.getElementById('top').prepend(b);
   }
+  stationInput.oninput = renderStatus;
 
   // Mjuk GPS-kontroll (krav 4.2): position hålls uppdaterad i bakgrunden, blockerar aldrig en skanning
   let lastPosition = null;
@@ -207,40 +312,33 @@ async function main() {
     );
   }
 
-  fetch('/api/stations').then(r => r.json()).then(stations => {
-    const list = document.getElementById('stationsList');
-    const finish = stations.find(s => s.typ === 'mal');
-    if (!stationInput.readOnly && finish) stationInput.value = finish.id;
-    for (const s of stations) {
-      const opt = document.createElement('option');
-      opt.value = s.id;
-      opt.label = s.namn;
-      list.appendChild(opt);
-    }
+  fillStationList(stationInput);
+  fetch('/api/stations').then(r => r.json()).then(list => {
+    stations = list;
+    cache('stations', list);
+    fillStationList(stationInput);
   }).catch(() => {});
 
-  const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-  video.srcObject = stream;
-  await video.play();
-
-  const detector = await makeDetector(video, status);
+  // Lagring, synk och manuell inmatning startas före kameran så att de fungerar även om kameran nekas
   const db = await openDb();
+  syncPending(db);
   setInterval(() => syncPending(db), 5000);
+  addEventListener('online', () => syncPending(db));
   refreshProgress(stationInput);
   setInterval(() => refreshProgress(stationInput), 5000);
-  status.textContent = 'skannar…';
 
   // Delas mellan kameraskanning och manuell inmatning (krav 4.2 "Manuell inmatning")
-  async function recordScan(runnerId) {
+  async function recordScan(runnerId, timestamp = serverNow()) {
     const stationId = stationInput.value.trim() || 'okänd';
-    const timestamp = Date.now();
     const existing = await getScan(db, runnerId, stationId);
-    if (!existing) {
+    // En provskanning före start får inte låsa ute den riktiga tiden
+    if (!existing || (existing.timestamp < raceStart && timestamp >= raceStart)) {
       await putScan(db, {
         runnerId, stationId, timestamp, synced: false,
         scannedBy, lat: lastPosition?.lat, long: lastPosition?.long,
       });
       flash('green');
+      if (prefs.vibrate) navigator.vibrate?.(80);
       log(`#${runnerId} @ ${stationId} — ${new Date(timestamp).toLocaleTimeString()}`);
       syncPending(db);
       refreshProgress(stationInput);
@@ -251,19 +349,30 @@ async function main() {
 
   setupKeypad(recordScan);
 
-  let busy = false;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    video.srcObject = stream;
+    await video.play();
+    keepAwake(video);
+  } catch (e) {
+    statusText = `Kamera ej tillgänglig (${e.message}) — använd manuell inmatning`;
+    renderStatus();
+    return;
+  }
+
+  const detector = await makeDetector(video);
+  statusText = 'skannar…';
+  renderStatus();
+
   async function tick() {
-    if (!busy) {
-      busy = true;
-      try {
-        const codes = await detector.detect();
-        if (codes.length > 0) {
-          await recordScan(extractRunnerId(codes[0].rawValue));
-        }
-      } catch {
-        // ignorera enstaka detect-fel, fortsätt skanna
+    try {
+      // Alla koder i bilden, inte bara den första, så att två löpare sida vid sida båda registreras
+      for (const code of await detector.detect()) {
+        const runnerId = extractRunnerId(code.rawValue);
+        if (runnerId) await recordScan(runnerId);
       }
-      busy = false;
+    } catch {
+      // ignorera enstaka detect-fel, fortsätt skanna
     }
     setTimeout(tick, detector.tickDelay);
   }
@@ -276,6 +385,7 @@ function setupKeypad(recordScan) {
   const display = document.getElementById('keypadDisplay');
   const grid = document.getElementById('keypadGrid');
   let digits = '';
+  let openedAt = 0; // tiden när löparen passerade, inte när numret är färdigskrivet
 
   for (const d of ['1', '2', '3', '4', '5', '6', '7', '8', '9', '⌫', '0']) {
     const btn = document.createElement('button');
@@ -290,19 +400,21 @@ function setupKeypad(recordScan) {
 
   document.getElementById('manualBtn').onclick = () => {
     digits = '';
+    openedAt = serverNow();
     display.textContent = '';
     keypad.classList.add('open');
   };
   document.getElementById('keypadCancel').onclick = () => keypad.classList.remove('open');
   document.getElementById('keypadOk').onclick = async () => {
     if (!digits) return;
-    await recordScan(digits);
+    await recordScan(digits, openedAt);
     keypad.classList.remove('open');
   };
 }
 
 main().catch(e => {
-  document.getElementById('status').textContent = 'Fel: ' + e.message;
+  statusText = 'Fel: ' + e.message;
+  renderStatus();
 });
 </script>
 </body>

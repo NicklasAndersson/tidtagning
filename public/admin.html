@@ -353,7 +353,7 @@ async function uploadGpx() {
 async function loadArchives() {
   const rows = await api('/api/admin/archives');
   document.getElementById('archives').innerHTML = rows.map(a =>
-    `<li><a href="/archive/${a.id}">${a.namn || '(namnlöst lopp)'} — ${new Date(a.archived_at).toLocaleString()}</a></li>`
+    `<li><a href="/archive/${a.id}">${a.namn || '(namnlöst lopp)'} — ${new Date(a.archived_at).toLocaleString()}</a> (<a href="/archive/${a.id}?download">ladda ner</a>)</li>`
   ).join('') || '<li>Inga arkiverade lopp ännu.</li>';
 }
 
@@ -363,23 +363,22 @@ async function resetRace() {
   await Promise.all([loadUnknown(), loadParticipants(), loadStations(), loadFunktionarer(), loadStartTime(), loadArchives()]);
 }
 
-async function setStartTime(startTime) {
-  await api('/api/admin/race-settings', { method: 'PUT', body: JSON.stringify({ startTime }) });
-  startTimeMs = startTime;
-  renderCountdown();
+async function setStart(body) {
+  await api('/api/admin/race-settings', { method: 'PUT', body: JSON.stringify(body) });
+  await loadStartTime();
 }
 
-function startNow() { setStartTime(Date.now()); }
+function startNow() { setStart({ startInSeconds: 0 }); }
 
 function startIn() {
   const seconds = parseInt(document.getElementById('startInSeconds').value, 10);
   if (!seconds) return;
-  setStartTime(Date.now() + seconds * 1000);
+  setStart({ startInSeconds: seconds });
 }
 
 function saveStartTime() {
   const val = document.getElementById('startTime').value;
-  setStartTime(val ? new Date(val).getTime() : null);
+  setStart({ startTime: val ? new Date(val).getTime() : null });
 }
 
 setInterval(renderCountdown, 1000);

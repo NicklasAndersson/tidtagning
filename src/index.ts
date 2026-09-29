@@ -20,16 +20,24 @@ app.get('/api/qr', (c) => {
   return c.body(svg, 200, { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'public, max-age=31536000, immutable' });
 });
 
+// Serverns klocka är referensen för alla tider; skannrarna mäter sin avvikelse mot den här
+app.get('/api/time', (c) => c.json({ now: Date.now() }));
+
 app.post('/api/scan', async (c) => {
   const { runnerId, stationId, timestamp, scannedBy, lat, long } = await c.req.json();
-  if (!runnerId || !stationId || !timestamp) {
+  if (!runnerId || !stationId || typeof timestamp !== 'number') {
     return c.json({ error: 'runnerId, stationId, timestamp krävs' }, 400);
   }
-  // ponytail: "första tiden gäller" löses av PRIMARY KEY + INSERT OR IGNORE, ingen egen dedupe-logik
+  // "Första tiden gäller" efter tidigaste tidsstämpel, inte efter vilken telefon som synkar först (flera
+  // funktionärer offline på samma station). Skanningar före start (test av skannern) räknas bara om
+  // inget efter start finns, så en provskanning aldrig låser ute den riktiga tiden.
   // Mjuk GPS-kontroll (krav 4.2): lat/long/scannedBy är valfria, skanningen går igenom utan dem
   await c.env.DB.prepare(
-    'INSERT OR IGNORE INTO scans (runner_id, station_id, timestamp, scanned_by, lat, long) VALUES (?, ?, ?, ?, ?, ?)'
-  ).bind(runnerId, stationId, timestamp, scannedBy ?? null, lat ?? null, long ?? null).run();
+    'INSERT INTO scans (runner_id, station_id, timestamp, scanned_by, lat, long) VALUES (?1, ?2, ?3, ?4, ?5, ?6) ' +
+    'ON CONFLICT(runner_id, station_id) DO UPDATE SET timestamp = excluded.timestamp, scanned_by = excluded.scanned_by, ' +
+    'lat = excluded.lat, long = excluded.long ' +
+    'WHERE (excluded.timestamp < ?7, excluded.timestamp) < (scans.timestamp < ?7, scans.timestamp)'
+  ).bind(String(runnerId), String(stationId), timestamp, scannedBy ?? null, lat ?? null, long ?? null, await startTime(c.env.DB)).run();
   return c.json({ ok: true });
 });
 
@@ -100,13 +108,19 @@ app.get('/api/live-positions', async (c) => {
   return c.json(results);
 });
 
+async function startTime(db: D1Database) {
+  const row = await db.prepare('SELECT start_time FROM race_settings WHERE id = 1').first<{ start_time: number | null }>();
+  return row?.start_time ?? 0;
+}
+
 async function computeResults(db: D1Database) {
   const { results: participants } = await db.prepare(
     'SELECT startnummer, namn, klass FROM participants'
   ).all();
+  // Provskanningar före start syns inte i resultaten (de ligger kvar i admin-vyn)
   const { results: scans } = await db.prepare(
-    'SELECT runner_id, station_id, timestamp FROM scans'
-  ).all();
+    'SELECT runner_id, station_id, timestamp FROM scans WHERE timestamp >= ?'
+  ).bind(await startTime(db)).all();
 
   const byRunner = new Map<string, { startnummer: string; namn: string; klass: string; known: boolean; times: Record<string, number> }>();
   for (const p of participants as any[]) {
@@ -130,46 +144,91 @@ function escapeHtml(s: string) {
   );
 }
 
-// Fristående statisk HTML-sida (krav 4.4 "Komplett Statisk Export"), sparas i archives.html vid arkivering
-function renderArchiveHtml(
-  namn: string | null,
-  archivedAt: number,
-  results: Awaited<ReturnType<typeof computeResults>>,
-  stations: { id: string; namn: string; typ: string }[],
-  logo: string | null
-) {
-  const finishId = stations.find((s) => s.typ === 'mal')?.id;
-  const rows = [...results].sort((a, b) => {
-    const at = finishId ? a.times[finishId] : undefined;
-    const bt = finishId ? b.times[finishId] : undefined;
-    if (at && bt) return at - bt;
-    if (at) return -1;
-    if (bt) return 1;
-    return a.namn.localeCompare(b.namn);
-  });
+type ArchiveData = {
+  namn: string | null;
+  archivedAt: number;
+  startTime: number | null;
+  gpx: string | null;
+  logo: string | null;
+  stations: { id: string; namn: string; typ: string; lat: number | null; long: number | null }[];
+  results: Awaited<ReturnType<typeof computeResults>>;
+  comments: { runner_id: string; timestamp: number; kommentar: string }[];
+};
 
-  const header = '<th>Namn</th><th>Klass</th>' + stations.map((s) => `<th>${escapeHtml(s.namn)}</th>`).join('');
-  const body = rows.map((r) => {
-    const cells = stations.map((s) => {
-      const t = r.times[s.id];
-      const cell = t ? new Date(t).toLocaleTimeString() : '';
-      return s.id === finishId ? `<td><b>${cell}</b></td>` : `<td>${cell}</td>`;
-    }).join('');
-    return `<tr><td>${escapeHtml(r.namn)}</td><td>${escapeHtml(r.klass)}</td>${cells}</tr>`;
-  }).join('');
+// Arkivets sida ritar sig själv i webbläsaren ur JSON-datan (tabell, karta, löparsidor), så filen är fristående
+const ARCHIVE_SCRIPT = String.raw`
+var D = JSON.parse(document.getElementById('data').textContent);
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+function pad(n) { return String(n).padStart(2, '0'); }
+function fmt(t) {
+  if (!D.startTime) return new Date(t).toLocaleTimeString('sv-SE');
+  var s = Math.max(0, Math.round((t - D.startTime) / 1000));
+  return Math.floor(s / 3600) + ':' + pad(Math.floor(s % 3600 / 60)) + ':' + pad(s % 60);
+}
+var fin = D.stations.filter(function (s) { return s.typ === 'mal'; })[0];
+var rows = D.results.slice().sort(function (a, b) {
+  var at = fin && a.times[fin.id], bt = fin && b.times[fin.id];
+  if (at && bt) return at - bt;
+  if (at) return -1;
+  if (bt) return 1;
+  return a.namn.localeCompare(b.namn);
+});
+document.getElementById('head').innerHTML = '<th>Namn</th><th>Klass</th>' + D.stations.map(function (s) { return '<th>' + esc(s.namn) + '</th>'; }).join('');
+document.getElementById('body').innerHTML = rows.map(function (r) {
+  return '<tr><td><a href="#r-' + encodeURIComponent(r.startnummer) + '">' + esc(r.namn) + '</a></td><td>' + esc(r.klass) + '</td>' +
+    D.stations.map(function (s) {
+      var t = r.times[s.id];
+      return '<td>' + (t ? (fin && s.id === fin.id ? '<b>' + fmt(t) + '</b>' : fmt(t)) : '') + '</td>';
+    }).join('') + '</tr>';
+}).join('');
+document.getElementById('runners').innerHTML = rows.map(function (r) {
+  var ev = D.stations.filter(function (s) { return r.times[s.id]; }).map(function (s) { return { t: r.times[s.id], html: esc(s.namn) }; })
+    .concat(D.comments.filter(function (c) { return c.runner_id === r.startnummer; }).map(function (c) { return { t: c.timestamp, html: '<i>' + esc(c.kommentar) + '</i>' }; }))
+    .sort(function (a, b) { return a.t - b.t; });
+  return '<details id="r-' + encodeURIComponent(r.startnummer) + '"><summary>#' + esc(r.startnummer) + ' ' + esc(r.namn) + (r.klass ? ' (' + esc(r.klass) + ')' : '') + '</summary><ul>' +
+    (ev.map(function (e) { return '<li>' + fmt(e.t) + ' – ' + e.html + '</li>'; }).join('') || '<li>Inga registrerade tider</li>') + '</ul></details>';
+}).join('');
+function openHash() { var el = location.hash && document.getElementById(location.hash.slice(1)); if (el && el.tagName === 'DETAILS') el.open = true; }
+addEventListener('hashchange', openHash); openHash();
+if (typeof L !== 'undefined') {
+  var map = L.map('map'), pts = [];
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(map);
+  if (D.gpx) {
+    var track = [].map.call(new DOMParser().parseFromString(D.gpx, 'application/xml').getElementsByTagName('trkpt'), function (p) { return [+p.getAttribute('lat'), +p.getAttribute('lon')]; });
+    if (track.length) { L.polyline(track, { color: '#1f6f4a', weight: 4 }).addTo(map); pts = pts.concat(track); }
+  }
+  D.stations.forEach(function (s) { if (s.lat != null && s.long != null) { L.marker([s.lat, s.long]).addTo(map).bindTooltip(s.namn); pts.push([s.lat, s.long]); } });
+  if (pts.length) map.fitBounds(pts); else document.getElementById('map').hidden = true;
+} else document.getElementById('map').hidden = true;
+`;
 
+// Fristående statisk HTML-sida (krav 4.4 "Komplett Statisk Export"): tider, mellantider, karta och löparsidor
+// med publikkommentarer. Sparas i archives.html vid arkivering.
+function renderArchiveHtml(d: ArchiveData) {
+  const json = JSON.stringify({ ...d, logo: undefined }).replace(/</g, '\\u003c');
   return `<!doctype html>
-<html lang="sv"><head><meta charset="utf-8"><title>${escapeHtml(namn || 'Lopp')}</title>
+<html lang="sv"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(d.namn || 'Lopp')}</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
-  body { font-family: sans-serif; margin: 1.5rem; }
+  body { font-family: sans-serif; margin: 1.5rem; max-width: 1100px; }
+  #map { height: 400px; margin-bottom: 1.5rem; }
   table { border-collapse: collapse; width: 100%; }
   th, td { padding: 0.4rem 0.6rem; border-bottom: 1px solid #ddd; text-align: left; }
+  details { border-bottom: 1px solid #ddd; padding: 0.4rem 0; }
+  summary { cursor: pointer; font-weight: bold; }
+  .table-wrap { overflow-x: auto; }
 </style></head>
 <body>
-${logo ? `<img src="${logo}" alt="" style="max-height:5rem">` : ''}
-<h1>${escapeHtml(namn || 'Lopp')}</h1>
-<p>Arkiverat ${new Date(archivedAt).toLocaleString()}</p>
-<table><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table>
+${d.logo ? `<img src="${escapeHtml(d.logo)}" alt="" style="max-height:5rem">` : ''}
+<h1>${escapeHtml(d.namn || 'Lopp')}</h1>
+<p>Arkiverat ${new Date(d.archivedAt).toISOString().slice(0, 10)}</p>
+<div id="map"></div>
+<div class="table-wrap"><table><thead><tr id="head"></tr></thead><tbody id="body"></tbody></table></div>
+<h2>Löpare</h2>
+<div id="runners"></div>
+<script type="application/json" id="data">${json}</script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>${ARCHIVE_SCRIPT}</script>
 </body></html>`;
 }
 
@@ -311,6 +370,11 @@ app.put('/api/admin/race-settings', async (c) => {
   if ('startTime' in body) {
     await c.env.DB.prepare('UPDATE race_settings SET start_time = ? WHERE id = 1').bind(body.startTime).run();
   }
+  // "Starta nu"/"om X sekunder" räknas på serverns klocka, inte adminens dator
+  if ('startInSeconds' in body) {
+    await c.env.DB.prepare('UPDATE race_settings SET start_time = ? WHERE id = 1')
+      .bind(Date.now() + Number(body.startInSeconds) * 1000).run();
+  }
   if ('gpx' in body) {
     await c.env.DB.prepare('UPDATE race_settings SET gpx = ? WHERE id = 1').bind(body.gpx).run();
   }
@@ -333,11 +397,19 @@ app.get('/api/admin/archives', async (c) => {
 
 // Arkivera & nollställ (krav 4.4): sparar en ögonblicksbild (inkl. nedladdningsbar HTML) med loppnamnet, sedan rensas allt aktivt data
 app.post('/api/admin/reset', async (c) => {
-  const settings = await c.env.DB.prepare('SELECT namn, logo FROM race_settings WHERE id = 1').first<{ namn: string | null; logo: string | null }>();
-  const { results: stations } = await c.env.DB.prepare('SELECT id, namn, typ FROM stations ORDER BY ordning, rowid').all<{ id: string; namn: string; typ: string }>();
+  const settings = await c.env.DB.prepare('SELECT namn, logo, gpx, start_time FROM race_settings WHERE id = 1')
+    .first<{ namn: string | null; logo: string | null; gpx: string | null; start_time: number | null }>();
+  const { results: stations } = await c.env.DB.prepare('SELECT id, namn, typ, lat, long FROM stations ORDER BY ordning, rowid')
+    .all<ArchiveData['stations'][number]>();
+  const { results: comments } = await c.env.DB.prepare(
+    'SELECT runner_id, timestamp, kommentar FROM gast_rapporter WHERE kommentar IS NOT NULL ORDER BY timestamp'
+  ).all<ArchiveData['comments'][number]>();
   const results = await computeResults(c.env.DB);
   const archivedAt = Date.now();
-  const html = renderArchiveHtml(settings?.namn ?? null, archivedAt, results, stations, settings?.logo ?? null);
+  const html = renderArchiveHtml({
+    namn: settings?.namn ?? null, archivedAt, startTime: settings?.start_time ?? null,
+    gpx: settings?.gpx ?? null, logo: settings?.logo ?? null, stations, results, comments,
+  });
 
   await c.env.DB.batch([
     c.env.DB.prepare('INSERT INTO archives (namn, archived_at, results_json, html) VALUES (?, ?, ?, ?)')
@@ -352,13 +424,13 @@ app.post('/api/admin/reset', async (c) => {
   return c.json({ ok: true });
 });
 
-// Nedladdningsbar statisk export av ett arkiverat lopp (krav 4.4)
+// Arkivet är en publik, läsbar länk (krav 4.4); ?download ger filen som nedladdning i stället
 app.get('/archive/:id', async (c) => {
   const row = await c.env.DB.prepare('SELECT namn, html FROM archives WHERE id = ?')
     .bind(c.req.param('id')).first<{ namn: string | null; html: string }>();
   if (!row) return c.text('Okänt arkiv', 404);
   const filename = `${(row.namn || 'lopp').replace(/[^a-zA-Z0-9åäöÅÄÖ_-]+/g, '_')}.html`;
-  c.header('Content-Disposition', `attachment; filename="${filename}"`);
+  if (c.req.query('download') !== undefined) c.header('Content-Disposition', `attachment; filename="${filename}"`);
   return c.html(row.html);
 });
 

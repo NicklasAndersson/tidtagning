@@ -3,3 +3,6 @@ node_modules/
 .dev.vars
 .DS_Store
 .claude/settings.local.json
+.wrangler-test/
+test-results/
+playwright-report/
