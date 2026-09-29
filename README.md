@@ -116,7 +116,7 @@ src/index.ts       Hono-API på Cloudflare Workers
 schema.sql         D1-schema
 ```
 
-Kartorna använder Leaflet och leaflet-gpx från unpkg och kartbilder från OpenStreetMap. Inga npm-beroenden i frontend.
+Kartorna använder Leaflet och leaflet-gpx från unpkg och kartbilder från OpenStreetMap. Inga npm-beroenden i frontend. QR-koderna genereras av Workern själv (`qrcode`, bara kärnan och SVG-renderaren).
 
 ### Datamodell (D1)
 
@@ -142,6 +142,7 @@ Kartorna använder Leaflet och leaflet-gpx från unpkg och kartbilder från Open
 | `GET` | `/api/gpx` | banans GPX-spår |
 | `GET` | `/api/race-settings` | loppnamn, starttid och om logga finns |
 | `GET` | `/api/logo` | loppets logga (bild) |
+| `GET` | `/api/qr?data=…` | QR-kod som SVG (används av utskriftssidan) |
 | `GET` | `/api/participant/:id`, `/api/guest-reports/:id` | underlag för löparsidan |
 
 ## Kända begränsningar

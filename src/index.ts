@@ -1,5 +1,8 @@
 import { Hono } from 'hono';
 import { basicAuth } from 'hono/basic-auth';
+// Bara kärnan + SVG-renderaren ur qrcode (ren JS, ingen canvas/PNG), så vi slipper extern QR-tjänst
+import QRCode from 'qrcode/lib/core/qrcode.js';
+import SvgRenderer from 'qrcode/lib/renderer/svg-tag.js';
 
 type Bindings = { DB: D1Database; ASSETS: Fetcher; ADMIN_USER: string; ADMIN_PASS: string };
 
@@ -8,6 +11,14 @@ const app = new Hono<{ Bindings: Bindings }>();
 // Samma QR-kod som funktionärerna skannar öppnas som en vanlig länk för publiken (krav 4.3).
 // Statisk sida i public/guest.html återanvänds, den läser startnumret ur URL:en själv.
 app.get('/l/:id', (c) => c.env.ASSETS.fetch(new Request(new URL('/guest.html', c.req.url))));
+
+// QR-kod som SVG (vektor, skarp i alla utskriftsstorlekar). Oautentiserad men billig och cachebar.
+app.get('/api/qr', (c) => {
+  const data = c.req.query('data');
+  if (!data || data.length > 300) return c.text('data krävs (max 300 tecken)', 400);
+  const svg = SvgRenderer.render(QRCode.create(data, { errorCorrectionLevel: 'L' }), { margin: 2 });
+  return c.body(svg, 200, { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'public, max-age=31536000, immutable' });
+});
 
 app.post('/api/scan', async (c) => {
   const { runnerId, stationId, timestamp, scannedBy, lat, long } = await c.req.json();

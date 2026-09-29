@@ -43,10 +43,9 @@
   <div id="funktionarGrid"></div>
 
 <script>
-// ponytail: QR-bilderna genereras av qr.wwn.se (extern tjänst), ingen egen QR-lib behövs
+// QR-koderna kommer som SVG från vårt eget /api/qr, så de skalas skarpt till valfri kortstorlek.
 // Kortbredden i mm delar alltid 180mm jämnt (180 = 6x30 = 4x45 = 3x60 = 2x90), så raden fylls
-// exakt utan rest oavsett storleksval. Pixelstorleken följer ~300dpi för skarp utskrift.
-const mmToPixels = (mm) => Math.round((mm / 25.4) * 300);
+// exakt utan rest oavsett storleksval.
 const SIZE_PRESETS = {
   liten: { mm: 30 },
   normal: { mm: 45 },
@@ -54,10 +53,7 @@ const SIZE_PRESETS = {
   extrastor: { mm: 90 },
 };
 
-function qrUrl(data, pixels) {
-  const params = new URLSearchParams({ data, size: String(pixels), format: 'png', errorCorrectionLevel: 'L' });
-  return `https://qr.wwn.se/api/qr?${params}`;
-}
+const qrUrl = (data) => `/api/qr?${new URLSearchParams({ data })}`;
 
 function applyGridSize(gridEl, preset) {
   const columns = 180 / preset.mm; // heltal by design, se presets ovan
@@ -82,7 +78,7 @@ async function render() {
     const card = document.createElement('div');
     card.className = 'card';
     const img = document.createElement('img');
-    img.src = qrUrl(`${baseUrl}/${n}`, mmToPixels(preset.mm));
+    img.src = qrUrl(`${baseUrl}/${n}`);
     card.appendChild(img);
     const label = document.createElement('div');
     const namn = namesByStartnummer.get(String(n));
@@ -103,7 +99,7 @@ async function renderFunktionarer() {
     const card = document.createElement('div');
     card.className = 'card';
     const img = document.createElement('img');
-    img.src = qrUrl(`${location.origin}/scan/${f.token}`, mmToPixels(preset.mm));
+    img.src = qrUrl(`${location.origin}/scan/${f.token}`);
     card.appendChild(img);
     const label = document.createElement('div');
     label.textContent = `${f.station_namn}${f.namn ? ' — ' + f.namn : ''}`;
