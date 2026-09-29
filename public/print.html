@@ -14,6 +14,14 @@
   .card { border: 1px solid #ccc; text-align: center; padding: 2mm; box-sizing: border-box; break-inside: avoid; page-break-inside: avoid; }
   .card img { width: 100%; height: auto; display: block; }
   .card div { font-size: 0.9em; font-weight: bold; margin-top: 0.25rem; }
+  /* Nummerlappsläge: en kolumn, två lappar per A4 (267mm användbar höjd), sidbrytning efter varannan */
+  #grid.bibs { width: 180mm; grid-template-columns: 1fr; gap: 0; }
+  .bib { box-sizing: border-box; height: 132mm; border: 1px dashed #999; padding: 6mm; display: flex; flex-direction: column; align-items: center; justify-content: space-between; text-align: center; }
+  .bib:nth-child(2n) { break-after: page; page-break-after: always; }
+  .bib .head { display: flex; align-items: center; gap: 4mm; font-size: 20pt; font-weight: bold; }
+  .bib .head img { max-height: 22mm; max-width: 50mm; width: auto; }
+  .bib > img { height: 75mm; width: 75mm; }
+  .bib .nr { font-size: 30pt; font-weight: bold; }
   @media print { #controls, hr { display: none; } body { margin: 0; } .card { border: none; } }
 </style>
 </head>
@@ -28,6 +36,7 @@
         <option value="normal" selected>Normal</option>
         <option value="stor">Stor (skanna på håll)</option>
         <option value="extrastor">Extra stor</option>
+        <option value="nummerlapp">Nummerlapp (2 per sida, med loppnamn och logga)</option>
       </select>
     </label>
     <button onclick="render()">Generera</button>
@@ -66,15 +75,39 @@ async function render() {
   const from = parseInt(document.getElementById('from').value, 10);
   const to = parseInt(document.getElementById('to').value, 10);
   const baseUrl = document.getElementById('baseUrl').value;
-  const preset = SIZE_PRESETS[document.getElementById('qrSize').value];
+  const mode = document.getElementById('qrSize').value;
+  const bibMode = mode === 'nummerlapp';
+  const preset = SIZE_PRESETS[bibMode ? 'normal' : mode];
   const grid = document.getElementById('grid');
   grid.innerHTML = '';
+  grid.classList.toggle('bibs', bibMode);
   applyGridSize(grid, preset);
+  if (bibMode) grid.style.gridTemplateColumns = '';
 
-  const results = await fetch('/api/results').then(r => r.json()).catch(() => []);
+  const [results, settings] = await Promise.all([
+    fetch('/api/results').then(r => r.json()).catch(() => []),
+    fetch('/api/race-settings').then(r => r.json()).catch(() => null),
+  ]);
   const namesByStartnummer = new Map(results.map(r => [r.startnummer, r.namn]));
 
   for (let n = from; n <= to; n++) {
+    if (bibMode) {
+      const namn = namesByStartnummer.get(String(n));
+      const bib = document.createElement('div');
+      bib.className = 'bib';
+      const head = document.createElement('div');
+      head.className = 'head';
+      if (settings?.has_logo) head.innerHTML = '<img src="/api/logo" alt="">';
+      head.append(settings?.namn || 'Lopp');
+      const img = document.createElement('img');
+      img.src = qrUrl(`${baseUrl}/${n}`);
+      const nr = document.createElement('div');
+      nr.className = 'nr';
+      nr.textContent = namn ? `#${n} ${namn}` : '#' + n;
+      bib.append(head, img, nr);
+      grid.appendChild(bib);
+      continue;
+    }
     const card = document.createElement('div');
     card.className = 'card';
     const img = document.createElement('img');

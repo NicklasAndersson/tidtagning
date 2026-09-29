@@ -31,7 +31,7 @@ Live: <https://lopp.wwn.se>
 | `/l/<bib>` | Public | Runner page: timeline and cheers (the bib's QR code leads here) |
 | `/admin` | Organizer | Race, logo, GPX, participants, stations (placed on a map), marshals, start, archive |
 | `/admin-scans` | Organizer | All scans with who scanned and coordinates |
-| `/print` | Organizer | Print QR codes for bibs and marshal cards |
+| `/print` | Organizer | Print QR codes for bibs (grid, or "Nummerlapp" mode: two per A4 with race name and logo) and marshal cards |
 | `/scanner` | Marshal | The scanner (installable PWA) |
 | `/scan/<token>` | Marshal | Marshal card link, redirects to a locked scanner |
 | `/archive/<id>` | Organizer | Download an archived race as HTML |

@@ -30,7 +30,7 @@ Live: <https://lopp.wwn.se>
 | `/l/<startnummer>` | Publik | Löparsida: tidslinje och hejarop (dit leder nummerlappens QR-kod) |
 | `/admin` | Arrangör | Lopp, GPX, deltagare, stationer (sätts ut på karta), funktionärer, start, arkiv |
 | `/admin-scans` | Arrangör | Alla skanningar med vem som skannade och koordinater |
-| `/print` | Arrangör | Utskrift av QR-koder för nummerlappar och funktionärskort |
+| `/print` | Arrangör | Utskrift av QR-koder för nummerlappar (rutnät eller "Nummerlapp": två per A4 med loppnamn och logga) och funktionärskort |
 | `/scanner` | Funktionär | Skannern (installerbar PWA) |
 | `/scan/<token>` | Funktionär | Funktionärskortets länk, skickar vidare till en låst skanner |
 | `/archive/<id>` | Arrangör | Nedladdning av ett arkiverat lopp som HTML |
