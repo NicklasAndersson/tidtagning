@@ -1,10 +1,11 @@
 import { Hono } from 'hono';
 import { basicAuth } from 'hono/basic-auth';
+import { accessKeys, verifyAccessJwt } from './access.ts';
 // Bara kärnan + SVG-renderaren ur qrcode (ren JS, ingen canvas/PNG), så vi slipper extern QR-tjänst
 import QRCode from 'qrcode/lib/core/qrcode.js';
 import SvgRenderer from 'qrcode/lib/renderer/svg-tag.js';
 
-type Bindings = { DB: D1Database; ASSETS: Fetcher; ADMIN_USER: string; ADMIN_PASS: string };
+type Bindings = { DB: D1Database; ASSETS: Fetcher; ADMIN_USER: string; ADMIN_PASS: string; ACCESS_TEAM_DOMAIN?: string; ACCESS_AUD?: string };
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -256,9 +257,18 @@ app.get('/api/guest-reports/:runnerId', async (c) => {
 });
 
 // Arrangören delar ett gemensamt inloggningspar (enligt kravspec 3.1) — Basic Auth räcker för PoC-adminet.
-app.use('/api/admin/*', async (c, next) =>
-  basicAuth({ username: c.env.ADMIN_USER, password: c.env.ADMIN_PASS })(c, next)
-);
+app.use('/api/admin/*', async (c, next) => {
+  const { ACCESS_TEAM_DOMAIN: team, ACCESS_AUD: aud } = c.env;
+  // Utan Access-konfiguration (lokal utveckling, tester) gäller det gemensamma Basic Auth-paret
+  if (!team || !aud) return basicAuth({ username: c.env.ADMIN_USER, password: c.env.ADMIN_PASS })(c, next);
+  // Cloudflare Access (Google-inloggning) släpper in arrangörer; JWT:n verifieras här så att inte
+  // workers.dev-adressen eller andra vägar förbi Access fungerar
+  const token = c.req.header('Cf-Access-Jwt-Assertion') ?? '';
+  const kid = (() => { try { return JSON.parse(atob(token.split('.')[0].replace(/-/g, '+').replace(/_/g, '/'))).kid; } catch {} })();
+  const who = token && await verifyAccessJwt(token, await accessKeys(team, kid), { aud, issuer: `https://${team}` });
+  if (!who) return c.text('Unauthorized', 401);
+  await next();
+});
 
 app.get('/api/admin/participants', async (c) => {
   const { results } = await c.env.DB.prepare(

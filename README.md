@@ -35,7 +35,20 @@ Live: <https://lopp.wwn.se>
 | `/scan/<token>` | Funktionär | Funktionärskortets länk, skickar vidare till en låst skanner |
 | `/archive/<id>` | Publik | Arkiverat lopp: karta, resultat och löparsidor med hejarop (`?download` ger filen) |
 
-Admin-API:t (`/api/admin/*`) skyddas med Basic Auth, med ett gemensamt användarnamn och lösenord för arrangörerna. Själva admin-sidorna är statiska. Webbläsaren frågar efter inloggning första gången de anropar API:t.
+Admin-API:t (`/api/admin/*`) skyddas med Cloudflare Access (inloggning med t.ex. Google, se nedan) eller, om Access inte är konfigurerat, med Basic Auth och ett gemensamt användarnamn och lösenord (`ADMIN_USER`/`ADMIN_PASS`, används även lokalt och i testerna). Själva admin-sidorna är statiska.
+
+### Inloggning med Cloudflare Access
+
+1. Zero Trust → Settings → Authentication: lägg till en inloggningsmetod (Google, eller One-time PIN som fungerar utan inställningar).
+2. Zero Trust → Access → Applications → Add → Self-hosted, med tre destinationer: `lopp.wwn.se/admin`, `lopp.wwn.se/print` och `lopp.wwn.se/api/admin`. (`/admin*` täcker även `/admin-scans`.) Skanner, funktionärskort och publika sidor ska **inte** ligga bakom Access.
+3. Lägg till en Allow-policy med arrangörernas e-postadresser.
+4. Kopiera applikationens *Application Audience (AUD) Tag* och ditt team-namn och lägg dem i `wrangler.toml`:
+   ```toml
+   [vars]
+   ACCESS_TEAM_DOMAIN = "<team>.cloudflareaccess.com"
+   ACCESS_AUD = "<aud-tag>"
+   ```
+5. `npm run deploy`. Workern verifierar Access-JWT:n på varje admin-anrop, så `workers.dev`-adressen går inte att använda för att kringgå inloggningen. När variablerna finns används inte längre Basic Auth.
 
 ## Arbetsflöde på tävlingsdagen
 

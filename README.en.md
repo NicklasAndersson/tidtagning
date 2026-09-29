@@ -36,7 +36,20 @@ Live: <https://lopp.wwn.se>
 | `/scan/<token>` | Marshal | Marshal card link, redirects to a locked scanner |
 | `/archive/<id>` | Public | Archived race: map, results and runner pages with cheers (`?download` gives the file) |
 
-The admin API (`/api/admin/*`) is protected with Basic Auth, using one shared username and password for the organizers. The admin pages themselves are static. The browser asks for credentials the first time they call the API.
+The admin API (`/api/admin/*`) is protected with Cloudflare Access (sign-in with e.g. Google, see below) or, if Access is not configured, with Basic Auth and one shared username and password (`ADMIN_USER`/`ADMIN_PASS`, also used locally and in the tests). The admin pages themselves are static.
+
+### Signing in with Cloudflare Access
+
+1. Zero Trust → Settings → Authentication: add a login method (Google, or One-time PIN which needs no setup).
+2. Zero Trust → Access → Applications → Add → Self-hosted, with three destinations: `lopp.wwn.se/admin`, `lopp.wwn.se/print` and `lopp.wwn.se/api/admin`. (`/admin*` also covers `/admin-scans`.) The scanner, marshal cards and public pages must **not** be behind Access.
+3. Add an Allow policy with the organizers' email addresses.
+4. Copy the application's *Application Audience (AUD) Tag* and your team name into `wrangler.toml`:
+   ```toml
+   [vars]
+   ACCESS_TEAM_DOMAIN = "<team>.cloudflareaccess.com"
+   ACCESS_AUD = "<aud-tag>"
+   ```
+5. `npm run deploy`. The Worker verifies the Access JWT on every admin call, so the `workers.dev` address cannot be used to bypass the login. Once the variables are set, Basic Auth is no longer used.
 
 ## Race-day workflow
 

@@ -15,3 +15,8 @@ binding = "ASSETS"
 binding = "DB"
 database_name = "tidtagning"
 database_id = "644b50da-1de3-4f2a-956e-801cbf8b3d66"
+
+# Cloudflare Access (inloggning för arrangörer), se README. Utan dessa gäller Basic Auth.
+[vars]
+ACCESS_TEAM_DOMAIN = "nicklas-andersson.cloudflareaccess.com"
+ACCESS_AUD = "da1f39c4ac414527db404b36584dd5c270663e4605851e0dcf93ac2cbb8b5b46"
