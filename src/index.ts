@@ -49,8 +49,17 @@ app.get('/api/stations', async (c) => {
 });
 
 app.get('/api/race-settings', async (c) => {
-  const row = await c.env.DB.prepare('SELECT namn, start_time FROM race_settings WHERE id = 1').first();
+  const row = await c.env.DB.prepare('SELECT namn, start_time, logo IS NOT NULL AS has_logo FROM race_settings WHERE id = 1').first();
   return c.json(row);
+});
+
+// Loppets logga, lagras som data-URL (png/jpeg/webp/gif) och serveras som bild
+app.get('/api/logo', async (c) => {
+  const row = await c.env.DB.prepare('SELECT logo FROM race_settings WHERE id = 1').first<{ logo: string | null }>();
+  const m = row?.logo?.match(/^data:(image\/[a-z]+);base64,(.*)$/);
+  if (!m) return c.text('Ingen logga uppladdad', 404);
+  const bytes = Uint8Array.from(atob(m[2]), (ch) => ch.charCodeAt(0));
+  return c.body(bytes, 200, { 'Content-Type': m[1], 'Cache-Control': 'no-cache' });
 });
 
 // Banans GPX-spår för översiktskartan (krav 5.1)
@@ -115,7 +124,8 @@ function renderArchiveHtml(
   namn: string | null,
   archivedAt: number,
   results: Awaited<ReturnType<typeof computeResults>>,
-  stations: { id: string; namn: string; typ: string }[]
+  stations: { id: string; namn: string; typ: string }[],
+  logo: string | null
 ) {
   const finishId = stations.find((s) => s.typ === 'mal')?.id;
   const rows = [...results].sort((a, b) => {
@@ -145,6 +155,7 @@ function renderArchiveHtml(
   th, td { padding: 0.4rem 0.6rem; border-bottom: 1px solid #ddd; text-align: left; }
 </style></head>
 <body>
+${logo ? `<img src="${logo}" alt="" style="max-height:5rem">` : ''}
 <h1>${escapeHtml(namn || 'Lopp')}</h1>
 <p>Arkiverat ${new Date(archivedAt).toLocaleString()}</p>
 <table><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table>
@@ -292,6 +303,13 @@ app.put('/api/admin/race-settings', async (c) => {
   if ('gpx' in body) {
     await c.env.DB.prepare('UPDATE race_settings SET gpx = ? WHERE id = 1').bind(body.gpx).run();
   }
+  if ('logo' in body) {
+    // null tar bort loggan; annars måste det vara en rasterbild-data-URL (ej SVG, som kan innehålla script) på högst ~400 kB
+    const ok = body.logo === null || (typeof body.logo === 'string' && body.logo.length < 550_000 &&
+      /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(body.logo));
+    if (!ok) return c.json({ error: 'Ogiltig logga (png/jpg/webp/gif, max 400 kB)' }, 400);
+    await c.env.DB.prepare('UPDATE race_settings SET logo = ? WHERE id = 1').bind(body.logo).run();
+  }
   return c.json({ ok: true });
 });
 
@@ -304,11 +322,11 @@ app.get('/api/admin/archives', async (c) => {
 
 // Arkivera & nollställ (krav 4.4): sparar en ögonblicksbild (inkl. nedladdningsbar HTML) med loppnamnet, sedan rensas allt aktivt data
 app.post('/api/admin/reset', async (c) => {
-  const settings = await c.env.DB.prepare('SELECT namn FROM race_settings WHERE id = 1').first<{ namn: string | null }>();
+  const settings = await c.env.DB.prepare('SELECT namn, logo FROM race_settings WHERE id = 1').first<{ namn: string | null; logo: string | null }>();
   const { results: stations } = await c.env.DB.prepare('SELECT id, namn, typ FROM stations ORDER BY ordning, rowid').all<{ id: string; namn: string; typ: string }>();
   const results = await computeResults(c.env.DB);
   const archivedAt = Date.now();
-  const html = renderArchiveHtml(settings?.namn ?? null, archivedAt, results, stations);
+  const html = renderArchiveHtml(settings?.namn ?? null, archivedAt, results, stations, settings?.logo ?? null);
 
   await c.env.DB.batch([
     c.env.DB.prepare('INSERT INTO archives (namn, archived_at, results_json, html) VALUES (?, ?, ?, ?)')
@@ -318,7 +336,7 @@ app.post('/api/admin/reset', async (c) => {
     c.env.DB.prepare('DELETE FROM stations'),
     c.env.DB.prepare('DELETE FROM funktionarer'),
     c.env.DB.prepare('DELETE FROM gast_rapporter'),
-    c.env.DB.prepare('UPDATE race_settings SET namn = NULL, start_time = NULL, gpx = NULL WHERE id = 1'),
+    c.env.DB.prepare('UPDATE race_settings SET namn = NULL, start_time = NULL, gpx = NULL, logo = NULL WHERE id = 1'),
   ]);
   return c.json({ ok: true });
 });

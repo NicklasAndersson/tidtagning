@@ -1,5 +1,7 @@
 # Tidtagning
 
+[English](README.en.md)
+
 Enkel, webbaserad tidtagning för mindre lopp med gemensam masstart. Funktionärer skannar löparnas QR-nummerlappar med mobilen, publiken följer loppet live på karta och resultatlista, och vem som helst som skannar en nummerlapp kan skicka ett hejarop.
 
 Körs helt på Cloudflare Workers + D1, utan byggsteg och utan frontend-ramverk: vanliga HTML-sidor i `public/` och ett litet Hono-API i `src/index.ts`.
@@ -37,7 +39,7 @@ Admin-API:t (`/api/admin/*`) skyddas med Basic Auth, med ett gemensamt användar
 
 ## Arbetsflöde på tävlingsdagen
 
-1. **Admin → Lopp:** ange loppets namn och ladda upp banans GPX-fil.
+1. **Admin → Lopp:** ange loppets namn, ladda upp banans GPX-fil och (valfritt) en logga. Loggan visas i toppmenyn på alla sidor och följer med i arkivet.
 2. **Admin → Stationer:** klicka på kartan där varje station ligger och ange namn, typ (Checkpoint/Mål) och *ordning längs banan* (1 = först). Utan ordning läggs stationen sist. Klicka på en station för att ändra den.
 3. **Admin → Deltagare:** lägg in startnummer, namn och klass.
 4. **Admin → Funktionärer:** skapa ett kort per funktionär och station.
@@ -97,6 +99,7 @@ Domänen (`lopp.wwn.se`) konfigureras som custom domain i `wrangler.toml`. Ett l
 
 ```sh
 npx wrangler d1 execute tidtagning --remote --command "ALTER TABLE stations ADD COLUMN ordning INTEGER"
+npx wrangler d1 execute tidtagning --remote --command "ALTER TABLE race_settings ADD COLUMN logo TEXT"
 ```
 
 ## Arkitektur
@@ -124,7 +127,7 @@ Kartorna använder Leaflet och leaflet-gpx från unpkg och kartbilder från Open
 | `scans` | officiella passeringar: `runner_id`, `station_id`, `timestamp`, `scanned_by`, `lat`, `long`. PK (`runner_id`, `station_id`) |
 | `gast_rapporter` | hejarop och positioner från publiken |
 | `funktionarer` | `token` → station |
-| `race_settings` | en rad: loppnamn, starttid, GPX-spår |
+| `race_settings` | en rad: loppnamn, starttid, GPX-spår, logga (data-URL) |
 | `archives` | arkiverade lopp: resultat-JSON och fristående HTML |
 
 ### Publikt API
@@ -137,7 +140,8 @@ Kartorna använder Leaflet och leaflet-gpx från unpkg och kartbilder från Open
 | `GET` | `/api/stations` | stationer sorterade längs banan |
 | `GET` | `/api/live-positions` | senast kända position per löpare |
 | `GET` | `/api/gpx` | banans GPX-spår |
-| `GET` | `/api/race-settings` | loppnamn och starttid |
+| `GET` | `/api/race-settings` | loppnamn, starttid och om logga finns |
+| `GET` | `/api/logo` | loppets logga (bild) |
 | `GET` | `/api/participant/:id`, `/api/guest-reports/:id` | underlag för löparsidan |
 
 ## Kända begränsningar

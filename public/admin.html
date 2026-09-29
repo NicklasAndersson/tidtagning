@@ -30,6 +30,12 @@
     <button onclick="uploadGpx()">Ladda upp GPX-spår</button>
     <span id="gpxStatus" class="status"></span>
   </div>
+  <div class="row">
+    <input id="logoFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+    <button onclick="uploadLogo()">Ladda upp logga</button>
+    <button class="secondary" onclick="removeLogo()">Ta bort logga</button>
+    <span id="logoStatus" class="status"></span>
+  </div>
 </section>
 
 <section class="card">
@@ -311,6 +317,28 @@ async function loadStartTime() {
 async function saveRaceNamn() {
   const namn = document.getElementById('raceNamn').value.trim();
   await api('/api/admin/race-settings', { method: 'PUT', body: JSON.stringify({ namn }) });
+}
+
+function readAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
+}
+
+async function uploadLogo() {
+  const file = document.getElementById('logoFile').files[0];
+  if (!file) return alert('Välj en bildfil först');
+  if (file.size > 400_000) return alert('Loggan är för stor (max 400 kB)');
+  await api('/api/admin/race-settings', { method: 'PUT', body: JSON.stringify({ logo: await readAsDataUrl(file) }) });
+  document.getElementById('logoStatus').textContent = 'Sparat! Ladda om sidan för att se den i menyn.';
+}
+
+async function removeLogo() {
+  await api('/api/admin/race-settings', { method: 'PUT', body: JSON.stringify({ logo: null }) });
+  document.getElementById('logoStatus').textContent = 'Borttagen.';
 }
 
 async function uploadGpx() {

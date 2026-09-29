@@ -29,6 +29,8 @@ p { margin: 0 0 0.75rem; }
 .topbar { background: var(--brand); color: #fff; position: sticky; top: 0; z-index: 1000; box-shadow: 0 1px 4px #0003; }
 .topbar-inner { max-width: 1100px; margin: 0 auto; display: flex; align-items: center; gap: 1rem; padding: 0 1rem; min-height: 3.25rem; }
 .brand { font-weight: 700; color: #fff; text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.brand { display: flex; align-items: center; gap: 0.5rem; }
+.brand .logo { height: 2.25rem; width: auto; border-radius: 4px; }
 .menu { display: flex; gap: 0.25rem; margin-left: auto; align-items: center; }
 .menu a { color: #fff; text-decoration: none; padding: 0.45rem 0.75rem; border-radius: 6px; opacity: 0.85; white-space: nowrap; }
 .menu a:hover { background: #fff2; opacity: 1; }

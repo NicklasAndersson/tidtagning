@@ -22,6 +22,8 @@
   toggle.onclick = () => toggle.setAttribute('aria-expanded', header.querySelector('.menu').classList.toggle('open'));
 
   fetch('/api/race-settings').then(r => r.json()).then(s => {
-    if (s?.namn) header.querySelector('.brand').textContent = s.namn;
+    const brand = header.querySelector('.brand');
+    if (s?.namn) brand.textContent = s.namn;
+    if (s?.has_logo) brand.insertAdjacentHTML('afterbegin', '<img class="logo" src="/api/logo" alt="">');
   }).catch(() => {});
 })();

@@ -42,7 +42,8 @@ CREATE TABLE IF NOT EXISTS race_settings (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   namn TEXT,
   start_time INTEGER,
-  gpx TEXT
+  gpx TEXT,
+  logo TEXT
 );
 INSERT OR IGNORE INTO race_settings (id, namn, start_time) VALUES (1, NULL, NULL);
 
