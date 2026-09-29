@@ -106,8 +106,8 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet-gpx@1.7.0/gpx.js"></script>
 <script>
-// ponytail: samma delade admin-inloggning skickas som Basic Auth på varje anrop,
-// webbläsaren visar sin inbyggda inloggningsruta vid 401 — ingen egen sessionshantering behövs
+// ponytail: inloggningen sköts av Cloudflare Access (cookie skickas automatiskt på samma origin),
+// lokalt Basic Auth via webbläsarens inbyggda ruta — ingen egen sessionshantering behövs
 async function api(path, opts = {}) {
   const res = await fetch(path, { ...opts, headers: { 'Content-Type': 'application/json', ...opts.headers } });
   if (!res.ok) throw new Error(await res.text());
@@ -360,7 +360,7 @@ async function loadArchives() {
 async function resetRace() {
   if (!confirm('Detta arkiverar och raderar ALL aktiv tävlingsdata (deltagare, stationer, funktionärer, tider). Fortsätt?')) return;
   await api('/api/admin/reset', { method: 'POST' });
-  await Promise.all([loadUnknown(), loadParticipants(), loadStations(), loadFunktionarer(), loadStartTime(), loadArchives()]);
+  location.reload(); // nollställer även karta (GPX), loppnamn och uppladdningsfält som annars ligger kvar på skärmen
 }
 
 async function setStart(body) {

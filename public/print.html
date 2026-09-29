@@ -7,22 +7,26 @@
   @page { size: A4; margin: 15mm; }
   body { font-family: sans-serif; margin: 2rem; }
   #controls { margin-bottom: 1.5rem; }
-  #controls input { width: 4rem; }
+  #controls input[type=number] { width: 4rem; }
   /* 180mm = A4-bredd minus 2x15mm marginal. Kolumnbredden är alltid ett heltalsbrott av det,
      så raderna fyller sidans bredd exakt utan rest, både på skärm och i utskrift. */
-  #grid, #funktionarGrid { display: grid; gap: 4mm; width: 180mm; }
+  .grid { display: grid; gap: 4mm; width: 180mm; }
   .card { border: 1px solid #ccc; text-align: center; padding: 2mm; box-sizing: border-box; break-inside: avoid; page-break-inside: avoid; }
   .card img { width: 100%; height: auto; display: block; }
   .card div { font-size: 0.9em; font-weight: bold; margin-top: 0.25rem; }
   /* Nummerlappsläge: en kolumn, två lappar per A4 (267mm användbar höjd), sidbrytning efter varannan */
-  #grid.bibs { width: 180mm; grid-template-columns: 1fr; gap: 0; }
+  .grid.bibs { grid-template-columns: 1fr; gap: 0; }
+  /* Varje vald variant börjar på ny sida */
+  .section + .section { break-before: page; page-break-before: always; }
+  .section h2 { font-size: 1rem; margin: 1rem 0 0.5rem; }
+  #variants label { margin-right: 1rem; white-space: nowrap; }
   .bib { box-sizing: border-box; height: 132mm; border: 1px dashed #999; padding: 6mm; display: flex; flex-direction: column; align-items: center; justify-content: space-between; text-align: center; }
   .bib:nth-child(2n) { break-after: page; page-break-after: always; }
   .bib .head { display: flex; align-items: center; gap: 4mm; font-size: 20pt; font-weight: bold; }
   .bib .head img { max-height: 22mm; max-width: 50mm; width: auto; }
   .bib > img { height: 75mm; width: 75mm; }
   .bib .nr { font-size: 30pt; font-weight: bold; }
-  @media print { #controls, hr { display: none; } body { margin: 0; } .card { border: none; } }
+  @media print { #controls, .section h2 { display: none; } body { margin: 0; } .card { border: none; } }
 </style>
 </head>
 <body>
@@ -30,26 +34,18 @@
     <label>Från startnummer: <input id="from" type="number" value="1"></label>
     <label>Till: <input id="to" type="number" value="20"></label>
     <label>Bas-URL: <input id="baseUrl" size="30" value="https://lopp.wwn.se/l"></label>
-    <label>Storlek:
-      <select id="qrSize">
-        <option value="liten">Liten (många per sida)</option>
-        <option value="normal" selected>Normal</option>
-        <option value="stor">Stor (skanna på håll)</option>
-        <option value="extrastor">Extra stor</option>
-        <option value="nummerlapp">Nummerlapp (2 per sida, med loppnamn och logga)</option>
-      </select>
-    </label>
+    <div id="variants">Varianter:
+      <label><input type="checkbox" value="liten"> Liten (30 mm)</label>
+      <label><input type="checkbox" value="normal" checked> Normal (45 mm)</label>
+      <label><input type="checkbox" value="stor"> Stor (60 mm)</label>
+      <label><input type="checkbox" value="extrastor"> Extra stor (90 mm)</label>
+      <label><input type="checkbox" value="nummerlapp"> Nummerlapp (2 per sida, med loppnamn och logga)</label>
+      <label><input type="checkbox" value="funktionar"> Funktionärskort (45 mm)</label>
+    </div>
     <button onclick="render()">Generera</button>
     <button onclick="window.print()">Skriv ut</button>
   </div>
-  <div id="grid"></div>
-
-  <hr>
-  <div id="controls">
-    <button onclick="renderFunktionarer()">Skriv ut funktionärskort</button>
-    <span>(kräver admin-inloggning)</span>
-  </div>
-  <div id="funktionarGrid"></div>
+  <div id="out"></div>
 
 <script>
 // QR-koderna kommer som SVG från vårt eget /api/qr, så de skalas skarpt till valfri kortstorlek.
@@ -71,75 +67,73 @@ function applyGridSize(gridEl, preset) {
   gridEl.style.gridTemplateColumns = `repeat(${columns}, 1fr)`;
 }
 
+function card(imgUrl, text) {
+  const el = document.createElement('div');
+  el.className = 'card';
+  const img = document.createElement('img');
+  img.src = imgUrl;
+  const label = document.createElement('div');
+  label.textContent = text;
+  el.append(img, label);
+  return el;
+}
+
 async function render() {
   const from = parseInt(document.getElementById('from').value, 10);
   const to = parseInt(document.getElementById('to').value, 10);
   const baseUrl = document.getElementById('baseUrl').value;
-  const mode = document.getElementById('qrSize').value;
-  const bibMode = mode === 'nummerlapp';
-  const preset = SIZE_PRESETS[bibMode ? 'normal' : mode];
-  const grid = document.getElementById('grid');
-  grid.innerHTML = '';
-  grid.classList.toggle('bibs', bibMode);
-  applyGridSize(grid, preset);
-  if (bibMode) grid.style.gridTemplateColumns = '';
+  const chosen = [...document.querySelectorAll('#variants input:checked')].map(i => i.value);
+  const out = document.getElementById('out');
+  out.innerHTML = '';
 
   const [results, settings] = await Promise.all([
     fetch('/api/results').then(r => r.json()).catch(() => []),
     fetch('/api/race-settings').then(r => r.json()).catch(() => null),
   ]);
   const namesByStartnummer = new Map(results.map(r => [r.startnummer, r.namn]));
+  const label = (n) => { const namn = namesByStartnummer.get(String(n)); return namn ? `#${n} ${namn}` : '#' + n; };
 
-  for (let n = from; n <= to; n++) {
-    if (bibMode) {
-      const namn = namesByStartnummer.get(String(n));
-      const bib = document.createElement('div');
-      bib.className = 'bib';
-      const head = document.createElement('div');
-      head.className = 'head';
-      if (settings?.has_logo) head.innerHTML = '<img src="/api/logo" alt="">';
-      head.append(settings?.namn || 'Lopp');
-      const img = document.createElement('img');
-      img.src = qrUrl(`${baseUrl}/${n}`);
-      const nr = document.createElement('div');
-      nr.className = 'nr';
-      nr.textContent = namn ? `#${n} ${namn}` : '#' + n;
-      bib.append(head, img, nr);
-      grid.appendChild(bib);
-      continue;
+  for (const variant of chosen) {
+    const section = document.createElement('div');
+    section.className = 'section';
+    const title = document.createElement('h2');
+    title.textContent = variant === 'funktionar' ? 'Funktionärskort' : variant === 'nummerlapp' ? 'Nummerlappar' : `Storlek: ${variant}`;
+    const grid = document.createElement('div');
+    grid.className = 'grid';
+    section.append(title, grid);
+    out.appendChild(section);
+
+    if (variant === 'funktionar') {
+      applyGridSize(grid, SIZE_PRESETS.normal);
+      const rows = await fetch('/api/admin/funktionarer').then(r => r.json()).catch(() => []);
+      for (const f of rows) {
+        grid.appendChild(card(qrUrl(`${location.origin}/scan/${f.token}`), `${f.station_namn}${f.namn ? ' — ' + f.namn : ''}`));
+      }
+      if (!rows.length) grid.textContent = 'Inga funktionärskort skapade.';
+    } else if (variant === 'nummerlapp') {
+      grid.classList.add('bibs');
+      for (let n = from; n <= to; n++) {
+        const bib = document.createElement('div');
+        bib.className = 'bib';
+        const head = document.createElement('div');
+        head.className = 'head';
+        if (settings?.has_logo) head.innerHTML = '<img src="/api/logo" alt="">';
+        head.append(settings?.namn || 'Lopp');
+        const img = document.createElement('img');
+        img.src = qrUrl(`${baseUrl}/${n}`);
+        const nr = document.createElement('div');
+        nr.className = 'nr';
+        nr.textContent = label(n);
+        bib.append(head, img, nr);
+        grid.appendChild(bib);
+      }
+    } else {
+      applyGridSize(grid, SIZE_PRESETS[variant]);
+      for (let n = from; n <= to; n++) grid.appendChild(card(qrUrl(`${baseUrl}/${n}`), label(n)));
     }
-    const card = document.createElement('div');
-    card.className = 'card';
-    const img = document.createElement('img');
-    img.src = qrUrl(`${baseUrl}/${n}`);
-    card.appendChild(img);
-    const label = document.createElement('div');
-    const namn = namesByStartnummer.get(String(n));
-    label.textContent = namn ? `#${n} ${namn}` : '#' + n;
-    card.appendChild(label);
-    grid.appendChild(card);
   }
 }
 render();
-
-async function renderFunktionarer() {
-  const rows = await fetch('/api/admin/funktionarer').then(r => r.json());
-  const preset = SIZE_PRESETS[document.getElementById('qrSize').value];
-  const grid = document.getElementById('funktionarGrid');
-  grid.innerHTML = '';
-  applyGridSize(grid, preset);
-  for (const f of rows) {
-    const card = document.createElement('div');
-    card.className = 'card';
-    const img = document.createElement('img');
-    img.src = qrUrl(`${location.origin}/scan/${f.token}`);
-    card.appendChild(img);
-    const label = document.createElement('div');
-    label.textContent = `${f.station_namn}${f.namn ? ' — ' + f.namn : ''}`;
-    card.appendChild(label);
-    grid.appendChild(card);
-  }
-}
 </script>
 </body>
 </html>
