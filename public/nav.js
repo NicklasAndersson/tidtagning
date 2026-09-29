@@ -12,7 +12,7 @@
   const header = document.createElement('header');
   header.className = isAdmin ? 'topbar' : 'topbar public';
   header.innerHTML = `<div class="topbar-inner">
-    <a class="brand" href="${isAdmin ? '/admin' : '/'}">Tidtagning</a>
+    <a class="brand" href="${isAdmin ? '/admin' : '/'}">Lopp</a>
     <button class="menu-toggle" aria-label="Meny" aria-expanded="false">☰</button>
     <nav class="menu">${links}</nav>
   </div>`;
