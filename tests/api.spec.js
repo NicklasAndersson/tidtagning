@@ -86,11 +86,11 @@ test('funktionärskort: rätt station och namn i länken, okänt kort ger 404', 
   expect(res.status()).toBe(302);
   const url = new URL(res.headers().location);
   expect(url.pathname).toBe('/scanner');
-  expect(Object.fromEntries(url.searchParams)).toEqual({ station: race.finishId, stationName: 'Mål', scannedBy: 'Anna' });
+  expect(Object.fromEntries(url.searchParams)).toEqual({ station: race.finishId, stationName: 'Mål', scannedBy: 'Anna', token: race.token });
   expect((await request.get('/scan/finnsinte', { maxRedirects: 0 })).status()).toBe(404);
 });
 
-test('admin kräver inloggning, publika API:er gör det inte', async () => {
+test('admin kräver inloggning, publika API:er gör det inte', async ({ race }) => {
   // Vanlig fetch, eftersom Playwrights request-kontexter ärver inloggningen från configen
   const call = (path, init = {}) => fetch(BASE + path, init).then((r) => r.status);
   const wrong = { Authorization: 'Basic ' + btoa('test:fel') };
@@ -102,7 +102,12 @@ test('admin kräver inloggning, publika API:er gör det inte', async () => {
   expect(await call('/api/admin/race-settings', { method: 'PUT', body: '{"startInSeconds":0}' })).toBe(401);
   for (const path of ['/api/results', '/api/stations', '/api/race-settings', '/api/live-positions', '/api/time'])
     expect(await call(path), path).toBe(200);
-  expect(await call('/api/scan', { method: 'POST', body: JSON.stringify({ runnerId: '1', stationId: 'x', timestamp: 1 }) })).toBe(200);
+  // Skanning kräver ett giltigt funktionärskort; adminlösenordet räcker inte
+  const scan = (headers) => call('/api/scan', { method: 'POST', headers, body: JSON.stringify({ runnerId: '1', stationId: 'x', timestamp: 1 }) });
+  expect(await scan()).toBe(401);
+  expect(await scan({ Authorization: 'Bearer finnsinte' })).toBe(401);
+  expect(await scan({ Authorization: 'Basic ' + btoa('test:test') })).toBe(401);
+  expect(await scan({ Authorization: `Bearer ${race.token}` })).toBe(200);
 });
 
 test('QR-endpoint ger SVG och avvisar tomt eller för långt innehåll', async ({ request }) => {

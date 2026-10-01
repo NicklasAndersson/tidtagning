@@ -164,14 +164,21 @@ let stations = cached('stations', []);
 let statusText = 'startar kamera…';
 let pendingCount = 0;
 
+// Funktionärskortets token krävs av /api/scan. Den sparas lokalt så att skannern fortsätter fungera
+// efter omladdning eller start från hemskärmen (utan ?token i adressen).
+let token = new URLSearchParams(location.search).get('token');
+if (token) cache('token', token); else token = cached('token', null);
+let unauthorized = false;
+
 function renderStatus() {
   const stationId = document.getElementById('stationId').value.trim();
   const unknown = stations.length > 0 && !stations.some(s => s.id === stationId);
   const el = document.getElementById('status');
   el.textContent = statusText +
     (pendingCount ? ` · ${pendingCount} ej synkade` : ' · allt synkat') +
-    (unknown ? ' · ⚠ okänd station' : '');
-  el.style.color = unknown ? '#f66' : pendingCount ? '#fc6' : '';
+    (unknown ? ' · ⚠ okänd station' : '') +
+    (unauthorized ? ' · ⚠ skanna ditt funktionärskort igen' : '');
+  el.style.color = unknown || unauthorized ? '#f66' : pendingCount ? '#fc6' : '';
 }
 
 let syncing = false;
@@ -182,9 +189,14 @@ async function syncPending(db) {
     for (const scan of (await allScans(db)).filter(s => !s.synced)) {
       const res = await fetch('/api/scan', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(scan),
       });
+      // Saknat/ogiltigt kort: skanningarna ligger kvar i kön och skickas när ett giltigt kort öppnats
+      // (loggraden syns även på smala skärmar där statusraden inte får plats)
+      if (res.status === 401 && !unauthorized) log('⚠ Skanna ditt funktionärskort igen – skanningarna sparas men synkas inte');
+      unauthorized = res.status === 401;
+      if (unauthorized) break;
       // Markera bara som synkad om posten inte ersatts av en ny skanning under tiden
       if (res.ok && (await getScan(db, scan.runnerId, scan.stationId))?.timestamp === scan.timestamp) {
         await putScan(db, { ...scan, synced: true });

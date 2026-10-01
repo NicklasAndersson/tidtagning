@@ -8,6 +8,18 @@ Körs helt på Cloudflare Workers + D1, utan byggsteg och utan frontend-ramverk:
 
 Live: <https://lopp.wwn.se>
 
+## Skärmbilder
+
+![Live-startsidan med karta, klocka och ledarlista](docs/screenshots/live.jpg)
+
+| Skannern (funktionär) | Löparsidan (publik) |
+|---|---|
+| <img src="docs/screenshots/scanner.png" width="300" alt="Skannern läser två nummerlappar"> | <img src="docs/screenshots/guest.png" width="300" alt="Löparsida med tidslinje och hejarop"> |
+
+![Resultatlista med mellantider](docs/screenshots/results.png)
+
+![Admin](docs/screenshots/admin.png)
+
 ## Funktioner
 
 - **Offline-först skanner.** Varje skanning sparas direkt i telefonens IndexedDB med telefonens klocka och synkas till servern när nätet finns. Kamera (BarcodeDetector) eller manuell sifferinmatning. Grön blink och hög ton vid registrerad skanning, låg ton om den redan fanns.
@@ -147,7 +159,7 @@ Kartorna använder Leaflet och leaflet-gpx från unpkg och kartbilder från Open
 
 | Metod | Sökväg | |
 |---|---|---|
-| `POST` | `/api/scan` | officiell skanning (från skannern) |
+| `POST` | `/api/scan` | officiell skanning (från skannern, kräver funktionärskortets token) |
 | `POST` | `/api/guest-report` | hejarop och position från publiken |
 | `GET` | `/api/results` | alla deltagare med tider per station |
 | `GET` | `/api/stations` | stationer sorterade längs banan |
@@ -160,6 +172,6 @@ Kartorna använder Leaflet och leaflet-gpx från unpkg och kartbilder från Open
 
 ## Kända begränsningar
 
-- `POST /api/scan` är oautentiserat. Vem som helst som känner till API:t kan registrera tider. Skäligt för ett mindre lopp, men värt att känna till.
+- `POST /api/scan` kräver ett funktionärskorts token (`Authorization: Bearer <token>`). Token går inte ut med tiden; den gäller tills kortet tas bort i admin eller loppet arkiveras. Skanningar som inte hunnit synkas dessförinnan kan inte skickas in efteråt. Ett kort ger rätt att registrera tider på alla stationer, och skannern utan kort (`/scanner`) kan inte synka.
 - Löparnas position på kartan är där de senast skannades, inte en GPS-position i realtid.
 - Kravspecifikationen (`kravspecifikation_tidtagningsapp.md`) nämner KV-cache och R2-lagring. Tills vidare räcker D1: GPX-filen och arkiven lagras i databasen, och sidorna hämtar data var 5–10:e sekund.

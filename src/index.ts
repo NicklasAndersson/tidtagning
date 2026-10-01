@@ -24,7 +24,13 @@ app.get('/api/qr', (c) => {
 // Serverns klocka är referensen för alla tider; skannrarna mäter sin avvikelse mot den här
 app.get('/api/time', (c) => c.json({ now: Date.now() }));
 
+// Bara den som har ett funktionärskort får registrera tider. Kortets token går inte ut: den gäller tills
+// kortet tas bort i admin eller loppet arkiveras, så att en telefon som varit offline länge ändå kan synka.
 app.post('/api/scan', async (c) => {
+  const token = c.req.header('Authorization')?.match(/^Bearer (.+)$/)?.[1];
+  if (!token || !await c.env.DB.prepare('SELECT 1 FROM funktionarer WHERE token = ?').bind(token).first()) {
+    return c.json({ error: 'Ogiltigt funktionärskort' }, 401);
+  }
   const { runnerId, stationId, timestamp, scannedBy, lat, long } = await c.req.json();
   if (!runnerId || !stationId || typeof timestamp !== 'number') {
     return c.json({ error: 'runnerId, stationId, timestamp krävs' }, 400);
@@ -60,6 +66,7 @@ app.get('/scan/:token', async (c) => {
   url.searchParams.set('station', row.station_id);
   url.searchParams.set('stationName', row.station_namn);
   url.searchParams.set('scannedBy', row.funktionar_namn || row.station_namn);
+  url.searchParams.set('token', c.req.param('token'));
   return c.redirect(url.toString());
 });
 
@@ -347,7 +354,8 @@ app.get('/api/admin/funktionarer', async (c) => {
 app.post('/api/admin/funktionarer', async (c) => {
   const { stationId, namn } = await c.req.json();
   if (!stationId) return c.json({ error: 'stationId krävs' }, 400);
-  const token = crypto.randomUUID().slice(0, 8);
+  // Token är nyckeln till /api/scan, därför hela UUID:t (122 slumpbitar) och inte en kort bit av det
+  const token = crypto.randomUUID().replaceAll('-', '');
   await c.env.DB.prepare('INSERT INTO funktionarer (token, station_id, namn) VALUES (?, ?, ?)')
     .bind(token, stationId, namn ?? '').run();
   return c.json({ token });

@@ -13,7 +13,7 @@ export const test = base.extend({
     const scanOf = async (runnerId, stationId = finishId) => (await scans()).find((s) => s.runner_id === runnerId && s.station_id === stationId);
     const results = async () => (await request.get('/api/results')).json();
     const scan = (runnerId, timestamp, stationId = finishId, extra = {}) =>
-      request.post('/api/scan', { data: { runnerId, stationId, timestamp, ...extra } });
+      request.post('/api/scan', { data: { runnerId, stationId, timestamp, ...extra }, headers: { Authorization: `Bearer ${token}` } });
     await use({ finishId, token, scans, scanOf, results, scan });
   },
 

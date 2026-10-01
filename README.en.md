@@ -8,6 +8,18 @@ Runs entirely on Cloudflare Workers + D1, with no build step and no frontend fra
 
 Live: <https://lopp.wwn.se>
 
+## Screenshots
+
+![Live start page with map, clock and leaderboard](docs/screenshots/live.jpg)
+
+| Scanner (marshal) | Runner page (public) |
+|---|---|
+| <img src="docs/screenshots/scanner.png" width="300" alt="The scanner reading two bibs"> | <img src="docs/screenshots/guest.png" width="300" alt="Runner page with timeline and cheers"> |
+
+![Results with split times](docs/screenshots/results.png)
+
+![Admin](docs/screenshots/admin.png)
+
 ## Features
 
 - **Offline-first scanner.** Every scan is stored immediately in the phone's IndexedDB with the phone's clock and synced to the server when a connection is available. Camera (BarcodeDetector) or manual number entry. Green flash and a high beep for a recorded scan, a low beep if it already existed.
@@ -148,7 +160,7 @@ The maps use Leaflet and leaflet-gpx from unpkg and map tiles from OpenStreetMap
 
 | Method | Path | |
 |---|---|---|
-| `POST` | `/api/scan` | official scan (from the scanner) |
+| `POST` | `/api/scan` | official scan (from the scanner, requires the marshal card token) |
 | `POST` | `/api/guest-report` | cheer and position from spectators |
 | `GET` | `/api/results` | all participants with times per station |
 | `GET` | `/api/stations` | stations ordered along the course |
@@ -161,6 +173,6 @@ The maps use Leaflet and leaflet-gpx from unpkg and map tiles from OpenStreetMap
 
 ## Known limitations
 
-- `POST /api/scan` is unauthenticated. Anyone who knows the API can register times. Reasonable for a small race, but worth knowing.
+- `POST /api/scan` requires a marshal card token (`Authorization: Bearer <token>`). Tokens never expire; they are valid until the card is removed in admin or the race is archived. Scans not synced before that cannot be submitted afterwards. One card allows registering times at any station, and the scanner without a card (`/scanner`) cannot sync.
 - A runner's position on the map is where they were last scanned, not a real-time GPS position.
 - The requirements spec (`kravspecifikation_tidtagningsapp.md`, in Swedish) mentions KV cache and R2 storage. For now D1 is enough: the GPX file, logo and archives are stored in the database, and the pages poll for data every 5–10 seconds.
