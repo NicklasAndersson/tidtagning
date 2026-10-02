@@ -362,7 +362,9 @@ async function main() {
   setupKeypad(recordScan);
 
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    // Utan önskad upplösning ger webbläsaren ofta 640x480, och då blir QR-rutorna för få pixlar på håll.
+    // "ideal" är ett önskemål, inte ett krav: kameror som inte klarar 1080p ger sitt bästa i stället för att fallera.
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } } });
     video.srcObject = stream;
     await video.play();
     keepAwake(video);
