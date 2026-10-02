@@ -77,7 +77,7 @@ app.get('/api/stations', async (c) => {
 
 app.get('/api/race-settings', async (c) => {
   const row = await c.env.DB.prepare('SELECT namn, start_time, logo IS NOT NULL AS has_logo FROM race_settings WHERE id = 1').first();
-  return c.json(row);
+  return c.json({ ...row, stop_time: await stopTime(c.env.DB) });
 });
 
 // Loppets logga, lagras som data-URL (png/jpeg/webp/gif) och serveras som bild
@@ -121,6 +121,17 @@ async function startTime(db: D1Database) {
   return row?.start_time ?? 0;
 }
 
+// Klockan stannar när arrangören trycker stopp, eller av sig själv när alla deltagare har skannats i mål
+async function stopTime(db: D1Database): Promise<number | null> {
+  const manual = await db.prepare('SELECT stop_time FROM race_settings WHERE id = 1').first<{ stop_time: number | null }>();
+  if (manual?.stop_time) return manual.stop_time;
+  const row = await db.prepare(
+    'SELECT (SELECT COUNT(*) FROM participants) AS total, COUNT(*) AS done, MAX(s.timestamp) AS last FROM scans s ' +
+    "JOIN stations st ON st.id = s.station_id AND st.typ = 'mal' JOIN participants p ON p.startnummer = s.runner_id WHERE s.timestamp >= ?"
+  ).bind(await startTime(db)).first<{ total: number; done: number; last: number | null }>();
+  return row && row.total > 0 && row.done === row.total ? row.last : null;
+}
+
 async function computeResults(db: D1Database) {
   const { results: participants } = await db.prepare(
     'SELECT startnummer, namn, klass FROM participants'
@@ -130,7 +141,7 @@ async function computeResults(db: D1Database) {
     'SELECT runner_id, station_id, timestamp FROM scans WHERE timestamp >= ?'
   ).bind(await startTime(db)).all();
 
-  const byRunner = new Map<string, { startnummer: string; namn: string; klass: string; known: boolean; times: Record<string, number> }>();
+  const byRunner = new Map<string, { startnummer: string; namn: string; klass: string; known: boolean; times: Record<string, number>; dnf?: boolean }>();
   for (const p of participants as any[]) {
     byRunner.set(p.startnummer, { startnummer: p.startnummer, namn: p.namn, klass: p.klass, known: true, times: {} });
   }
@@ -140,6 +151,11 @@ async function computeResults(db: D1Database) {
     }
     byRunner.get(s.runner_id)!.times[s.station_id] = s.timestamp;
   }
+  // Efter stopp markeras alla utan måltid som "gick inte i mål". En skanning i mål som kommer efter stopp
+  // räknas ändå (tiden sparas och dnf försvinner).
+  const stopped = await stopTime(db);
+  const finishIds = new Set(((await db.prepare("SELECT id FROM stations WHERE typ = 'mal'").all()).results as any[]).map((r) => r.id));
+  for (const r of byRunner.values()) r.dnf = !!stopped && !Object.keys(r.times).some((id) => finishIds.has(id));
   return [...byRunner.values()];
 }
 
@@ -186,7 +202,7 @@ document.getElementById('body').innerHTML = rows.map(function (r) {
   return '<tr><td><a href="#r-' + encodeURIComponent(r.startnummer) + '">' + esc(r.namn) + '</a></td><td>' + esc(r.klass) + '</td>' +
     D.stations.map(function (s) {
       var t = r.times[s.id];
-      return '<td>' + (t ? (fin && s.id === fin.id ? '<b>' + fmt(t) + '</b>' : fmt(t)) : '') + '</td>';
+      return '<td>' + (t ? (fin && s.id === fin.id ? '<b>' + fmt(t) + '</b>' : fmt(t)) : (r.dnf && fin && s.id === fin.id ? 'Gick inte i mål' : '')) + '</td>';
     }).join('') + '</tr>';
 }).join('');
 document.getElementById('runners').innerHTML = rows.map(function (r) {
@@ -198,6 +214,9 @@ document.getElementById('runners').innerHTML = rows.map(function (r) {
 }).join('');
 function openHash() { var el = location.hash && document.getElementById(location.hash.slice(1)); if (el && el.tagName === 'DETAILS') el.open = true; }
 addEventListener('hashchange', openHash); openHash();
+// Löparsidorna är hopfällda på skärmen men ska med i utskriften
+addEventListener('beforeprint', function () { [].forEach.call(document.querySelectorAll('details'), function (d) { d.dataset.was = d.open ? '1' : ''; d.open = true; }); });
+addEventListener('afterprint', function () { [].forEach.call(document.querySelectorAll('details'), function (d) { d.open = !!d.dataset.was; }); });
 if (typeof L !== 'undefined') {
   var map = L.map('map'), pts = [];
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(map);
@@ -225,11 +244,21 @@ function renderArchiveHtml(d: ArchiveData) {
   details { border-bottom: 1px solid #ddd; padding: 0.4rem 0; }
   summary { cursor: pointer; font-weight: bold; }
   .table-wrap { overflow-x: auto; }
+  @media print {
+    @page { size: A4 landscape; margin: 12mm; }
+    body { margin: 0; max-width: none; font-size: 10pt; }
+    #map, .noprint { display: none !important; }
+    th { border-bottom: 2px solid #000; }
+    tr, details { break-inside: avoid; }
+    th, td { padding: 0.2rem 0.4rem; }
+    a { color: inherit; text-decoration: none; }
+    thead { display: table-header-group; }
+  }
 </style></head>
 <body>
 ${d.logo ? `<img src="${escapeHtml(d.logo)}" alt="" style="max-height:5rem">` : ''}
 <h1>${escapeHtml(d.namn || 'Lopp')}</h1>
-<p>Arkiverat ${new Date(d.archivedAt).toISOString().slice(0, 10)}</p>
+<p>Arkiverat ${new Date(d.archivedAt).toISOString().slice(0, 10)} <button class="noprint" onclick="print()">Skriv ut</button></p>
 <div id="map"></div>
 <div class="table-wrap"><table><thead><tr id="head"></tr></thead><tbody id="body"></tbody></table></div>
 <h2>Löpare</h2>
@@ -368,7 +397,7 @@ app.delete('/api/admin/funktionarer/:token', async (c) => {
 
 app.get('/api/admin/race-settings', async (c) => {
   const row = await c.env.DB.prepare('SELECT namn, start_time FROM race_settings WHERE id = 1').first();
-  return c.json(row);
+  return c.json({ ...row, stop_time: await stopTime(c.env.DB) });
 });
 
 // Admin-vy (krav 7): vem skannade, samt koordinater när de finns
@@ -385,8 +414,15 @@ app.put('/api/admin/race-settings', async (c) => {
   if ('namn' in body) {
     await c.env.DB.prepare('UPDATE race_settings SET namn = ? WHERE id = 1').bind(body.namn).run();
   }
+  // Återuppta: klockan går vidare med samma starttid
+  if (body.resume === true) {
+    await c.env.DB.prepare('UPDATE race_settings SET stop_time = NULL WHERE id = 1').run();
+  }
   if ('startTime' in body) {
     await c.env.DB.prepare('UPDATE race_settings SET start_time = ? WHERE id = 1').bind(body.startTime).run();
+  }
+  if (body.stop === true) {
+    await c.env.DB.prepare('UPDATE race_settings SET stop_time = ? WHERE id = 1').bind(Date.now()).run();
   }
   // "Starta nu"/"om X sekunder" räknas på serverns klocka, inte adminens dator
   if ('startInSeconds' in body) {
@@ -437,8 +473,13 @@ app.post('/api/admin/reset', async (c) => {
     c.env.DB.prepare('DELETE FROM stations'),
     c.env.DB.prepare('DELETE FROM funktionarer'),
     c.env.DB.prepare('DELETE FROM gast_rapporter'),
-    c.env.DB.prepare('UPDATE race_settings SET namn = NULL, start_time = NULL, gpx = NULL, logo = NULL WHERE id = 1'),
+    c.env.DB.prepare('UPDATE race_settings SET namn = NULL, start_time = NULL, stop_time = NULL, gpx = NULL, logo = NULL WHERE id = 1'),
   ]);
+  return c.json({ ok: true });
+});
+
+app.delete('/api/admin/archives/:id', async (c) => {
+  await c.env.DB.prepare('DELETE FROM archives WHERE id = ?').bind(c.req.param('id')).run();
   return c.json({ ok: true });
 });
 

@@ -66,6 +66,7 @@
 initLiveMap('map');
 
 let startTime = null;
+let stopTime = null;
 let stations = [];
 
 function fmt(ms) {
@@ -77,8 +78,8 @@ function tick() {
   const label = document.getElementById('clockLabel');
   const clock = document.getElementById('clock');
   if (!startTime) { label.textContent = 'Starttid ej satt'; clock.textContent = '–'; return; }
-  const diff = startTime - Date.now();
-  label.textContent = diff > 0 ? 'Start om' : 'Tid sedan start';
+  const diff = startTime - (stopTime || Date.now());
+  label.textContent = stopTime ? 'Sluttid' : diff > 0 ? 'Start om' : 'Tid sedan start';
   clock.textContent = fmt(Math.abs(diff));
 }
 
@@ -109,7 +110,7 @@ function renderBoard(rows) {
   document.getElementById('board').innerHTML = rows.map(r => {
     const t = r.finish ?? r.lastTime;
     const time = t ? (startTime ? fmt(t - startTime) : new Date(t).toLocaleTimeString()) : '';
-    const status = r.finish ? 'I mål' : r.lastStation ? esc(r.lastStation) : 'Ej passerat';
+    const status = r.finish ? 'I mål' : r.dnf ? 'Gick inte i mål' : r.lastStation ? esc(r.lastStation) : 'Ej passerat';
     return `<tr class="${r.finish ? 'done' : ''}">
       <td class="pos">${r.finish ? ++place + '.' : ''}</td>
       <td><a href="/l/${encodeURIComponent(r.startnummer)}">${esc(r.namn)}</a>${r.klass ? `<span class="klass">${esc(r.klass)}</span>` : ''}</td>
@@ -119,7 +120,7 @@ function renderBoard(rows) {
   }).join('') || '<tr><td class="muted">Inga deltagare ännu.</td></tr>';
 
   const done = rows.filter(r => r.finish).length;
-  const out = rows.filter(r => !r.finish && r.count).length;
+  const out = rows.filter(r => !r.finish && !r.dnf && r.count).length;
   document.getElementById('summary').textContent = rows.length ? `${rows.length} deltagare · ${out} på banan · ${done} i mål` : '';
 }
 
@@ -131,6 +132,7 @@ async function load() {
   ]);
   stations = st;
   startTime = settings?.start_time || null;
+  stopTime = settings?.stop_time || null;
   if (settings?.namn) {
     document.getElementById('raceName').textContent = settings.namn;
     document.title = `${settings.namn} – live`;

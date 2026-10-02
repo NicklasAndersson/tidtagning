@@ -35,6 +35,7 @@
 let stations = [];
 let results = [];
 let startTime = null;
+let stopTime = null;
 let sortKey = 'finish';
 
 function fmtElapsed(ms) {
@@ -47,7 +48,7 @@ function fmtElapsed(ms) {
 
 function cellFor(runner, stationId) {
   const t = runner.times[stationId];
-  if (!t) return '';
+  if (!t) return runner.dnf && stationId === finishStationId() ? 'Gick inte i mål' : '';
   return startTime ? fmtElapsed(t - startTime) : new Date(t).toLocaleTimeString();
 }
 
@@ -102,7 +103,7 @@ function updateCountdown() {
   const el = document.getElementById('countdown');
   if (!startTime) { el.textContent = ''; return; }
   const diff = startTime - Date.now();
-  el.textContent = diff > 0 ? `Start om ${fmtElapsed(diff)}` : '';
+  el.textContent = diff > 0 ? `Start om ${fmtElapsed(diff)}` : stopTime ? `Sluttid ${fmtElapsed(stopTime - startTime)}` : '';
 }
 
 async function load() {
@@ -113,6 +114,7 @@ async function load() {
   ]);
   stations = stationsRes;
   startTime = settingsRes?.start_time || null;
+  stopTime = settingsRes?.stop_time || null;
   if (settingsRes?.namn) document.getElementById('title').textContent = settingsRes.namn;
   results = resultsRes;
   renderKlassOptions();

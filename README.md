@@ -125,6 +125,7 @@ Domänen (`lopp.wwn.se`) konfigureras som custom domain i `wrangler.toml`. Ett l
 ```sh
 npx wrangler d1 execute tidtagning --remote --command "ALTER TABLE stations ADD COLUMN ordning INTEGER"
 npx wrangler d1 execute tidtagning --remote --command "ALTER TABLE race_settings ADD COLUMN logo TEXT"
+npx wrangler d1 execute tidtagning --remote --command "ALTER TABLE race_settings ADD COLUMN stop_time INTEGER"
 ```
 
 ## Arkitektur

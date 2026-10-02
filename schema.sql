@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS race_settings (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   namn TEXT,
   start_time INTEGER,
+  stop_time INTEGER,
   gpx TEXT,
   logo TEXT
 );

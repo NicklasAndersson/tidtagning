@@ -136,11 +136,44 @@ test('arkivera: resultaten sparas med namn och allt aktivt nollställs', async (
   expect(archive.namn).toBe('Vårruset');
   const html = await (await request.get(`/archive/${archive.id}`)).text();
   expect(html).toContain('Vårruset');
-  expect(html).toContain('Stina &lt;b&gt;'); // escapat
+  expect(html).toContain('Stina \\u003cb>'); // escapat i JSON-datan
   expect(html).toContain('Mål');
+
+  expect((await request.delete(`/api/admin/archives/${archive.id}`)).ok()).toBe(true);
+  expect((await (await request.get('/api/admin/archives')).json()).some((a) => a.id === archive.id)).toBe(false);
+  expect((await request.get(`/archive/${archive.id}`)).status()).toBe(404);
 
   expect(await race.scans()).toHaveLength(0);
   expect(await (await request.get('/api/stations')).json()).toHaveLength(0);
   expect(await race.results()).toHaveLength(0);
   expect(await (await request.get('/api/race-settings')).json()).toMatchObject({ namn: null, start_time: null });
+});
+
+test('stopp: obeskannade markeras som gick inte i mål, sen måltid räknas ändå, återuppta behåller starttiden', async ({ request, race }) => {
+  await request.put('/api/admin/participants/1', { data: { namn: 'A' } });
+  await request.put('/api/admin/participants/2', { data: { namn: 'B' } });
+  await request.put('/api/admin/participants/3', { data: { namn: 'C' } }); // kommer aldrig i mål, så ingen autostopp
+  await request.put('/api/admin/race-settings', { data: { startTime: 1_000 } });
+  await race.scan('1', 5_000);
+  const settings = async () => (await request.get('/api/race-settings')).json();
+  expect((await settings()).stop_time).toBeNull(); // alla är inte i mål än
+  await request.put('/api/admin/race-settings', { data: { stop: true } });
+  expect((await settings()).stop_time).toBeGreaterThan(0);
+  const dnf = async (n) => (await race.results()).find((r) => r.startnummer === n).dnf;
+  expect(await dnf('1')).toBe(false);
+  expect(await dnf('2')).toBe(true);
+  await race.scan('2', 9_000); // efter stopp: tiden räknas ändå
+  expect(await dnf('2')).toBe(false);
+  await request.put('/api/admin/race-settings', { data: { startTime: 2_000 } });
+  expect((await settings()).stop_time).toBeGreaterThan(0); // ny starttid återupptar inte
+  await request.put('/api/admin/race-settings', { data: { resume: true } });
+  expect((await settings()).stop_time).toBeNull();
+  expect((await settings()).start_time).toBe(2_000);
+});
+
+test('klockan stannar av sig själv när alla deltagare är i mål', async ({ request, race }) => {
+  await request.put('/api/admin/participants/1', { data: { namn: 'A' } });
+  await request.put('/api/admin/race-settings', { data: { startTime: 1_000 } });
+  await race.scan('1', 7_000);
+  expect((await (await request.get('/api/race-settings')).json()).stop_time).toBe(7_000);
 });

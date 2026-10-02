@@ -87,6 +87,8 @@
     <button onclick="startNow()">Starta loppet nu</button>
     <input id="startInSeconds" type="number" placeholder="sekunder" style="flex: 0; min-width: 7rem;">
     <button class="secondary" onclick="startIn()">Starta om X sekunder</button>
+    <button class="danger" id="stopBtn" onclick="stopRace()">Stoppa klockan</button>
+    <button id="resumeBtn" onclick="setStart({ resume: true })" hidden>Återuppta klockan</button>
   </div>
   <div class="row">
     <input id="startTime" type="datetime-local" style="flex: 0; min-width: 14rem;">
@@ -287,6 +289,7 @@ async function deleteStation(id) {
 }
 
 let startTimeMs = null;
+let stopTimeMs = null;
 
 function fmtElapsed(ms) {
   const s = Math.floor(ms / 1000);
@@ -299,6 +302,7 @@ function fmtElapsed(ms) {
 function renderCountdown() {
   const el = document.getElementById('countdown');
   if (!startTimeMs) { el.textContent = 'Ingen starttid satt.'; return; }
+  if (stopTimeMs) { el.textContent = `Klockan stoppad: ${fmtElapsed(stopTimeMs - startTimeMs)}`; return; }
   const diff = startTimeMs - Date.now();
   el.textContent = diff > 0 ? `Start om ${fmtElapsed(diff)}` : `Loppet startade ${new Date(startTimeMs).toLocaleTimeString()}`;
 }
@@ -306,6 +310,9 @@ function renderCountdown() {
 async function loadStartTime() {
   const row = await api('/api/admin/race-settings');
   startTimeMs = row?.start_time ?? null;
+  stopTimeMs = row?.stop_time ?? null;
+  document.getElementById('stopBtn').hidden = !!stopTimeMs;
+  document.getElementById('resumeBtn').hidden = !stopTimeMs;
   document.getElementById('raceNamn').value = row?.namn ?? '';
   if (startTimeMs) {
     const d = new Date(startTimeMs);
@@ -353,8 +360,14 @@ async function uploadGpx() {
 async function loadArchives() {
   const rows = await api('/api/admin/archives');
   document.getElementById('archives').innerHTML = rows.map(a =>
-    `<li><a href="/archive/${a.id}">${a.namn || '(namnlöst lopp)'} — ${new Date(a.archived_at).toLocaleString()}</a> (<a href="/archive/${a.id}?download">ladda ner</a>)</li>`
+    `<li><a href="/archive/${a.id}">${a.namn || '(namnlöst lopp)'} — ${new Date(a.archived_at).toLocaleString()}</a> (<a href="/archive/${a.id}?download">ladda ner</a>) <button class="danger" onclick="deleteArchive(${a.id})">Radera</button></li>`
   ).join('') || '<li>Inga arkiverade lopp ännu.</li>';
+}
+
+async function deleteArchive(id) {
+  if (!confirm('Radera arkivet för alltid? Det går inte att ångra.')) return;
+  await api('/api/admin/archives/' + id, { method: 'DELETE' });
+  await loadArchives();
 }
 
 async function resetRace() {
@@ -366,6 +379,10 @@ async function resetRace() {
 async function setStart(body) {
   await api('/api/admin/race-settings', { method: 'PUT', body: JSON.stringify(body) });
   await loadStartTime();
+}
+
+function stopRace() {
+  if (confirm('Stoppa klockan? Alla som inte skannats i mål markeras som "Gick inte i mål".')) setStart({ stop: true });
 }
 
 function startNow() { setStart({ startInSeconds: 0 }); }
