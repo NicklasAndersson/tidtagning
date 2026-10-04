@@ -44,6 +44,12 @@ test('okänd löpare syns som "Okänd" och får namn i efterhand utan att tiden 
 });
 
 test('gästrapporter påverkar aldrig officiella tider men syns i tidslinjen', async ({ request, race }) => {
+  const post = (data) => request.post('/api/guest-report', { data });
+  expect((await post({ runnerId: '5', timestamp: 1, kommentar: 'För tidigt' })).status()).toBe(403); // loppet har inte startat
+  await request.put('/api/admin/race-settings', { data: { startInSeconds: -1 } });
+  await request.put('/api/admin/race-settings', { data: { commentsEnabled: false } });
+  expect((await post({ runnerId: '5', timestamp: 1, kommentar: 'Avstängt' })).status()).toBe(403);
+  await request.put('/api/admin/race-settings', { data: { commentsEnabled: true } });
   await request.post('/api/guest-report', { data: { runnerId: '5', timestamp: 1_000, kommentar: 'Heja!' } });
   await request.post('/api/guest-report', { data: { runnerId: '5', timestamp: 2_000 } });
   expect(await race.scans()).toHaveLength(0);

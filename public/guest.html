@@ -24,7 +24,7 @@
   <h1 id="namn">Löpare</h1>
   <div id="klass"></div>
 
-  <div class="card">
+  <div class="card" id="commentCard" hidden>
     <p>Heja på löparen! Din plats loggas bara om du tillåter det.</p>
     <textarea id="kommentar" rows="3" placeholder="Skriv ett hejarop…"></textarea>
     <button onclick="sendComment()">Skicka hejarop</button>
@@ -99,6 +99,7 @@ async function init() {
   const p = await fetch(`/api/participant/${encodeURIComponent(runnerId)}`).then(r => r.json());
   document.getElementById('namn').textContent = p.namn || `Löpare #${runnerId}`;
   document.getElementById('klass').textContent = p.klass || '';
+  fetch('/api/race-settings').then(r => r.json()).then(r => { document.getElementById('commentCard').hidden = !r.comments_open; });
   report(null); // logga tid + plats direkt vid öppning, utan kommentar
   loadTimeline();
 }

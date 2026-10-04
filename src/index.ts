@@ -77,7 +77,7 @@ app.get('/api/stations', async (c) => {
 
 app.get('/api/race-settings', async (c) => {
   const row = await c.env.DB.prepare('SELECT namn, start_time, logo IS NOT NULL AS has_logo FROM race_settings WHERE id = 1').first();
-  return c.json({ ...row, stop_time: await stopTime(c.env.DB) });
+  return c.json({ ...row, stop_time: await stopTime(c.env.DB), comments_open: await commentsOpen(c.env.DB) });
 });
 
 // Loppets logga, lagras som data-URL (png/jpeg/webp/gif) och serveras som bild
@@ -130,6 +130,12 @@ async function stopTime(db: D1Database): Promise<number | null> {
     "JOIN stations st ON st.id = s.station_id AND st.typ = 'mal' JOIN participants p ON p.startnummer = s.runner_id WHERE s.timestamp >= ?"
   ).bind(await startTime(db)).first<{ total: number; done: number; last: number | null }>();
   return row && row.total > 0 && row.done === row.total ? row.last : null;
+}
+
+// Hejarop tillåts bara när funktionen är på och loppet pågår (startat, ej stoppat)
+async function commentsOpen(db: D1Database) {
+  const r = await db.prepare('SELECT comments_enabled, start_time FROM race_settings WHERE id = 1').first<{ comments_enabled: number | null; start_time: number | null }>();
+  return r?.comments_enabled !== 0 && !!r?.start_time && r.start_time <= Date.now() && !(await stopTime(db));
 }
 
 async function computeResults(db: D1Database) {
@@ -279,6 +285,7 @@ app.get('/api/participant/:id', async (c) => {
 app.post('/api/guest-report', async (c) => {
   const { runnerId, timestamp, kommentar, lat, long } = await c.req.json();
   if (!runnerId || !timestamp) return c.json({ error: 'runnerId, timestamp krävs' }, 400);
+  if (kommentar && !(await commentsOpen(c.env.DB))) return c.json({ error: 'Hejarop är stängda' }, 403);
   await c.env.DB.prepare(
     'INSERT INTO gast_rapporter (runner_id, timestamp, kommentar, lat, long) VALUES (?, ?, ?, ?, ?)'
   ).bind(runnerId, timestamp, kommentar ?? null, lat ?? null, long ?? null).run();
@@ -396,7 +403,7 @@ app.delete('/api/admin/funktionarer/:token', async (c) => {
 });
 
 app.get('/api/admin/race-settings', async (c) => {
-  const row = await c.env.DB.prepare('SELECT namn, start_time FROM race_settings WHERE id = 1').first();
+  const row = await c.env.DB.prepare('SELECT namn, start_time, comments_enabled FROM race_settings WHERE id = 1').first();
   return c.json({ ...row, stop_time: await stopTime(c.env.DB) });
 });
 
@@ -428,6 +435,9 @@ app.put('/api/admin/race-settings', async (c) => {
   if ('startInSeconds' in body) {
     await c.env.DB.prepare('UPDATE race_settings SET start_time = ? WHERE id = 1')
       .bind(Date.now() + Number(body.startInSeconds) * 1000).run();
+  }
+  if ('commentsEnabled' in body) {
+    await c.env.DB.prepare('UPDATE race_settings SET comments_enabled = ? WHERE id = 1').bind(body.commentsEnabled ? 1 : 0).run();
   }
   if ('gpx' in body) {
     await c.env.DB.prepare('UPDATE race_settings SET gpx = ? WHERE id = 1').bind(body.gpx).run();
