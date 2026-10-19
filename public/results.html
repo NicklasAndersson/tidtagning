@@ -36,6 +36,7 @@ let stations = [];
 let results = [];
 let startTime = null;
 let stopTime = null;
+let resultsHidden = false;
 let sortKey = 'finish';
 
 function fmtElapsed(ms) {
@@ -49,6 +50,7 @@ function fmtElapsed(ms) {
 function cellFor(runner, stationId) {
   const t = runner.times[stationId];
   if (!t) return runner.dnf && stationId === finishStationId() ? 'Gick inte i mål' : '';
+  if (resultsHidden && stationId === finishStationId()) return 'I mål'; // t är placeringen, inte en tid
   return startTime ? fmtElapsed(t - startTime) : new Date(t).toLocaleTimeString();
 }
 
@@ -114,6 +116,7 @@ async function load() {
   ]);
   stations = stationsRes;
   startTime = settingsRes?.start_time || null;
+  resultsHidden = !!settingsRes?.results_hidden;
   stopTime = settingsRes?.stop_time || null;
   if (settingsRes?.namn) document.getElementById('title').textContent = settingsRes.namn;
   results = resultsRes;

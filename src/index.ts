@@ -77,7 +77,7 @@ app.get('/api/stations', async (c) => {
 
 app.get('/api/race-settings', async (c) => {
   const row = await c.env.DB.prepare('SELECT namn, start_time, logo IS NOT NULL AS has_logo FROM race_settings WHERE id = 1').first();
-  return c.json({ ...row, stop_time: await stopTime(c.env.DB), comments_open: await commentsOpen(c.env.DB) });
+  return c.json({ ...row, stop_time: await stopTime(c.env.DB), comments_open: await commentsOpen(c.env.DB), results_hidden: await resultsHidden(c.env.DB) });
 });
 
 // Loppets logga, lagras som data-URL (png/jpeg/webp/gif) och serveras som bild
@@ -132,6 +132,10 @@ async function stopTime(db: D1Database): Promise<number | null> {
   return row && row.total > 0 && row.done === row.total ? row.last : null;
 }
 
+async function resultsHidden(db: D1Database) {
+  return (await db.prepare('SELECT results_hidden FROM race_settings WHERE id = 1').first<{ results_hidden: number }>())?.results_hidden === 1;
+}
+
 // Hejarop tillåts bara när funktionen är på och loppet pågår (startat, ej stoppat)
 async function commentsOpen(db: D1Database) {
   const r = await db.prepare('SELECT comments_enabled, start_time FROM race_settings WHERE id = 1').first<{ comments_enabled: number | null; start_time: number | null }>();
@@ -166,7 +170,19 @@ async function computeResults(db: D1Database) {
 }
 
 // Publik resultatlista (krav 5.1): deltagare + alla mellantider, ingen inloggning krävs
-app.get('/api/results', async (c) => c.json(await computeResults(c.env.DB)));
+// Med dolda sluttider ersätts måltiden av placeringen (1, 2, ...) för alla utom funktionärer (kortets token),
+// så att rangordningen finns kvar men inte klockslaget. Admin ser tiderna i /api/admin/scans.
+app.get('/api/results', async (c) => {
+  const results = await computeResults(c.env.DB);
+  const token = c.req.header('Authorization')?.match(/^Bearer (.+)$/)?.[1];
+  const isStaff = !!token && !!await c.env.DB.prepare('SELECT 1 FROM funktionarer WHERE token = ?').bind(token).first();
+  if (isStaff || !await resultsHidden(c.env.DB)) return c.json(results);
+  const finishIds = ((await c.env.DB.prepare("SELECT id FROM stations WHERE typ = 'mal'").all()).results as any[]).map((r) => r.id);
+  for (const id of finishIds) {
+    results.filter((r) => r.times[id]).sort((a, b) => a.times[id] - b.times[id]).forEach((r, i) => { r.times[id] = i + 1; });
+  }
+  return c.json(results);
+});
 
 function escapeHtml(s: string) {
   return String(s ?? '').replace(/[&<>"']/g, (ch) =>
@@ -403,7 +419,7 @@ app.delete('/api/admin/funktionarer/:token', async (c) => {
 });
 
 app.get('/api/admin/race-settings', async (c) => {
-  const row = await c.env.DB.prepare('SELECT namn, start_time, comments_enabled FROM race_settings WHERE id = 1').first();
+  const row = await c.env.DB.prepare('SELECT namn, start_time, comments_enabled, results_hidden FROM race_settings WHERE id = 1').first();
   return c.json({ ...row, stop_time: await stopTime(c.env.DB) });
 });
 
@@ -438,6 +454,9 @@ app.put('/api/admin/race-settings', async (c) => {
   }
   if ('commentsEnabled' in body) {
     await c.env.DB.prepare('UPDATE race_settings SET comments_enabled = ? WHERE id = 1').bind(body.commentsEnabled ? 1 : 0).run();
+  }
+  if (typeof body.resultsHidden === 'boolean') {
+    await c.env.DB.prepare('UPDATE race_settings SET results_hidden = ? WHERE id = 1').bind(body.resultsHidden ? 1 : 0).run();
   }
   if ('gpx' in body) {
     await c.env.DB.prepare('UPDATE race_settings SET gpx = ? WHERE id = 1').bind(body.gpx).run();
@@ -483,7 +502,7 @@ app.post('/api/admin/reset', async (c) => {
     c.env.DB.prepare('DELETE FROM stations'),
     c.env.DB.prepare('DELETE FROM funktionarer'),
     c.env.DB.prepare('DELETE FROM gast_rapporter'),
-    c.env.DB.prepare('UPDATE race_settings SET namn = NULL, start_time = NULL, stop_time = NULL, gpx = NULL, logo = NULL WHERE id = 1'),
+    c.env.DB.prepare('UPDATE race_settings SET namn = NULL, start_time = NULL, stop_time = NULL, gpx = NULL, logo = NULL, results_hidden = 0 WHERE id = 1'),
   ]);
   return c.json({ ok: true });
 });

@@ -127,6 +127,7 @@ npx wrangler d1 execute tidtagning --remote --command "ALTER TABLE stations ADD 
 npx wrangler d1 execute tidtagning --remote --command "ALTER TABLE race_settings ADD COLUMN logo TEXT"
 npx wrangler d1 execute tidtagning --remote --command "ALTER TABLE race_settings ADD COLUMN stop_time INTEGER"
 npx wrangler d1 execute tidtagning --remote --command "ALTER TABLE race_settings ADD COLUMN comments_enabled INTEGER NOT NULL DEFAULT 1"
+npx wrangler d1 execute tidtagning --remote --command "ALTER TABLE race_settings ADD COLUMN results_hidden INTEGER NOT NULL DEFAULT 0"
 ```
 
 ## Arkitektur

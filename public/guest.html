@@ -73,6 +73,10 @@ async function loadTimeline() {
   ]);
   const stationNamn = new Map(stations.map(s => [s.id, s.namn]));
   const runner = results.find(r => r.startnummer === runnerId);
+  // Med dolda sluttider är måltiden en placering, inte en tidsstämpel: visa den inte i tidslinjen
+  if (runner && (await fetch('/api/race-settings').then(r => r.json())).results_hidden) {
+    for (const s of stations) if (s.typ === 'mal') delete runner.times[s.id];
+  }
 
   const entries = [
     ...comments.map(c => ({ timestamp: c.timestamp, html: escapeHtml(c.kommentar) })),

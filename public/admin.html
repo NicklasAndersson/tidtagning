@@ -27,6 +27,7 @@
   </div>
   <div class="row">
     <label><input id="commentsEnabled" type="checkbox" onchange="saveCommentsEnabled()"> Tillåt hejarop på löparsidorna (under pågående lopp)</label>
+    <label><input id="resultsHidden" type="checkbox" onchange="saveResultsHidden()"> Dölj sluttider i den publika resultatlistan (placeringen visas)</label>
   </div>
   <div class="row">
     <input id="gpxFile" type="file" accept=".gpx">
@@ -318,6 +319,7 @@ async function loadStartTime() {
   document.getElementById('resumeBtn').hidden = !stopTimeMs;
   document.getElementById('raceNamn').value = row?.namn ?? '';
   document.getElementById('commentsEnabled').checked = row?.comments_enabled !== 0;
+  document.getElementById('resultsHidden').checked = row?.results_hidden === 1;
   if (startTimeMs) {
     const d = new Date(startTimeMs);
     document.getElementById('startTime').value = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
@@ -328,6 +330,11 @@ async function loadStartTime() {
 async function saveCommentsEnabled() {
   const commentsEnabled = document.getElementById('commentsEnabled').checked;
   await api('/api/admin/race-settings', { method: 'PUT', body: JSON.stringify({ commentsEnabled }) });
+}
+
+async function saveResultsHidden() {
+  const resultsHidden = document.getElementById('resultsHidden').checked;
+  await api('/api/admin/race-settings', { method: 'PUT', body: JSON.stringify({ resultsHidden }) });
 }
 
 async function saveRaceNamn() {

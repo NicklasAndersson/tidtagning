@@ -244,7 +244,7 @@ async function refreshProgress(stationInput) {
   syncClock().catch(() => {});
   try {
     const [results, settings] = await Promise.all([
-      fetch('/api/results').then(r => r.json()),
+      fetch('/api/results', { headers: token ? { Authorization: `Bearer ${token}` } : {} }).then(r => r.json()),
       fetch('/api/race-settings').then(r => r.json()),
     ]);
     raceStart = settings?.start_time || 0;

@@ -67,6 +67,7 @@ initLiveMap('map');
 
 let startTime = null;
 let stopTime = null;
+let resultsHidden = false;
 let stations = [];
 
 function fmt(ms) {
@@ -109,7 +110,7 @@ function renderBoard(rows) {
   let place = 0;
   document.getElementById('board').innerHTML = rows.map(r => {
     const t = r.finish ?? r.lastTime;
-    const time = t ? (startTime ? fmt(t - startTime) : new Date(t).toLocaleTimeString()) : '';
+    const time = t && !(resultsHidden && r.finish) ? (startTime ? fmt(t - startTime) : new Date(t).toLocaleTimeString()) : '';
     const status = r.finish ? 'I mål' : r.dnf ? 'Gick inte i mål' : r.lastStation ? esc(r.lastStation) : 'Ej passerat';
     return `<tr class="${r.finish ? 'done' : ''}">
       <td class="pos">${r.finish ? ++place + '.' : ''}</td>
@@ -132,6 +133,7 @@ async function load() {
   ]);
   stations = st;
   startTime = settings?.start_time || null;
+  resultsHidden = !!settings?.results_hidden;
   stopTime = settings?.stop_time || null;
   if (settings?.namn) {
     document.getElementById('raceName').textContent = settings.namn;

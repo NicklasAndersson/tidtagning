@@ -45,7 +45,8 @@ CREATE TABLE IF NOT EXISTS race_settings (
   stop_time INTEGER,
   gpx TEXT,
   logo TEXT,
-  comments_enabled INTEGER NOT NULL DEFAULT 1
+  comments_enabled INTEGER NOT NULL DEFAULT 1,
+  results_hidden INTEGER NOT NULL DEFAULT 0
 );
 INSERT OR IGNORE INTO race_settings (id, namn, start_time) VALUES (1, NULL, NULL);
 
